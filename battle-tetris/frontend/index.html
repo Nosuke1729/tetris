@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Battle Tetris Web</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ============================================================
+     タイトル画面
+============================================================ -->
+<div id="screen-title" class="screen">
+  <div class="title-wrapper">
+    <h1 class="game-title">BATTLE<br><span>TETRIS</span></h1>
+
+    <div class="title-form">
+      <label>プレイヤー名
+        <input id="input-name" type="text" placeholder="Player" maxlength="16" />
+      </label>
+
+      <div class="btn-group">
+        <button id="btn-single" class="btn btn-primary">▶ シングルプレイ</button>
+        <button id="btn-battle" class="btn btn-secondary">⚔ 対戦</button>
+      </div>
+    </div>
+
+    <div class="controls-help">
+      <h3>操作説明</h3>
+      <table class="keytable">
+        <tr><td>← →</td><td>左右移動</td></tr>
+        <tr><td>↓</td><td>ソフトドロップ</td></tr>
+        <tr><td>Space</td><td>ハードドロップ</td></tr>
+        <tr><td>↑ / X</td><td>右回転</td></tr>
+        <tr><td>Z</td><td>左回転</td></tr>
+        <tr><td>C</td><td>ホールド</td></tr>
+        <tr><td>P</td><td>ポーズ</td></tr>
+        <tr><td>Esc</td><td>退出</td></tr>
+      </table>
+    </div>
+
+    <div id="ws-status" class="ws-status">● オフライン</div>
+  </div>
+</div>
+
+<!-- ============================================================
+     ルーム画面
+============================================================ -->
+<div id="screen-room" class="screen" style="display:none">
+  <div class="room-wrapper">
+    <h2>対戦ルーム</h2>
+
+    <div class="room-actions">
+      <button id="btn-create-room" class="btn btn-primary">部屋を作成</button>
+      <div class="join-row">
+        <input id="input-room-id" type="text" placeholder="部屋ID" maxlength="8" />
+        <button id="btn-join-room" class="btn btn-secondary">参加</button>
+      </div>
+    </div>
+
+    <div id="room-info" style="display:none">
+      <div class="room-id-box">
+        部屋ID: <strong id="room-id-display"></strong>
+        <button id="btn-copy-room" class="btn btn-small">コピー</button>
+      </div>
+      <div id="player-list" class="player-list"></div>
+      <div id="room-status" class="room-status"></div>
+      <div class="room-btns">
+        <button id="btn-ready" class="btn btn-primary" style="display:none">準備完了</button>
+        <button id="btn-start" class="btn btn-primary" style="display:none">ゲーム開始</button>
+      </div>
+    </div>
+
+    <div id="room-status" class="room-status"></div>
+    <button id="btn-back-title" class="btn btn-outline">← 戻る</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     ゲーム画面
+============================================================ -->
+<div id="screen-game" class="screen" style="display:none">
+  <div class="game-wrapper">
+    <div class="game-topbar">
+      <button id="btn-pause" class="btn btn-small">一時停止</button>
+      <button id="btn-exit-game" class="btn btn-small btn-danger">退出</button>
+    </div>
+    <div class="canvas-container">
+      <canvas id="game-canvas"></canvas>
+      <div id="countdown-overlay" class="countdown-overlay" style="display:none"></div>
+    </div>
+    <div id="opponent-area" style="display:none"></div>
+  </div>
+</div>
+
+<!-- ============================================================
+     結果画面
+============================================================ -->
+<div id="screen-result" class="screen" style="display:none">
+  <div class="result-wrapper">
+    <h2 id="result-label" class="result-label">GAME OVER</h2>
+    <div class="result-stats">
+      <p id="result-score"></p>
+      <p id="result-lines"></p>
+      <p id="result-level"></p>
+    </div>
+    <div class="result-btns">
+      <button id="btn-rematch" class="btn btn-primary" style="display:none">再戦</button>
+      <button id="btn-play-again" class="btn btn-primary">もう一度</button>
+      <button id="btn-back-title2" class="btn btn-outline">タイトルへ</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>
