@@ -102,7 +102,7 @@ function showRoomSetup() {
 // ============================================================
 
 function getWsUrl(): string {
-  const base = (window as any).__WS_URL__ || `ws://${location.hostname}:8787`;
+  const base = __WS_URL__ || `ws://${location.hostname}:8787`;
   return base;
 }
 

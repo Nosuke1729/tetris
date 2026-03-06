@@ -14,6 +14,7 @@ import { isTSpin } from "./tspin";
 import { calcClearResult, ClearResult } from "./scoring";
 import { cancelGarbage } from "./garbage";
 import { getSpawnPosition } from "./piece";
+import { createRng } from "./bag";
 
 export interface LockEventData {
   board: number[][];
@@ -46,7 +47,6 @@ export class GameEngine {
     this.callbacks = callbacks;
     this.bagManager = new BagManager(seed);
     // ゴミ穴用乱数（seedから派生）
-    const { createRng } = require("./bag");
     this.garbageRng = createRng(seed ^ 0xdeadbeef);
 
     this.state = {

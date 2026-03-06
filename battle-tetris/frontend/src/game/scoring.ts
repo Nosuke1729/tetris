@@ -1,6 +1,7 @@
 // ============================================================
 // game/scoring.ts  –  スコア・攻撃量計算
 // ============================================================
+import { FALL_INTERVALS } from "@shared/constants";
 
 import {
   SCORE_TABLE, ATTACK_TABLE, COMBO_BONUS_SCORE,
@@ -75,7 +76,6 @@ function calcComboAttack(combo: number): number {
 
 // レベルからの落下間隔計算
 export function getFallInterval(level: number): number {
-  const { FALL_INTERVALS } = require("../../../shared/constants");
   const idx = Math.min(level - 1, FALL_INTERVALS.length - 1);
   return FALL_INTERVALS[idx];
 }
