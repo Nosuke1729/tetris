@@ -230,9 +230,21 @@ function startGame(seed: number) {
 
   // Canvas セットアップ
   const canvas = el("game-canvas") as HTMLCanvasElement;
-  const canvasW = CELL_SIZE * BOARD_WIDTH + 160 + (gameMode === "battle" ? MINI_CELL * BOARD_WIDTH + 80 : 0);
-  canvas.width = canvasW;
-  canvas.height = CELL_SIZE * VISIBLE_HEIGHT + 40;
+  const LEFT_PANEL_W = 150;
+const RIGHT_PANEL_W = 150;
+const BOARD_PX = CELL_SIZE * BOARD_WIDTH;
+const OPPONENT_GAP = 10;
+const OPPONENT_W = MINI_CELL * BOARD_WIDTH + 60;
+
+const canvasW =
+  gameMode === "battle"
+    ? LEFT_PANEL_W + BOARD_PX + RIGHT_PANEL_W + OPPONENT_GAP + OPPONENT_W
+    : LEFT_PANEL_W + BOARD_PX + RIGHT_PANEL_W;
+
+const canvasH = CELL_SIZE * VISIBLE_HEIGHT;
+
+canvas.width = canvasW;
+canvas.height = canvasH;
   renderer = new Renderer(canvas, CELL_SIZE);
 
   // エンジン起動
