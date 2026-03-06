@@ -37,16 +37,21 @@ export default {
     }
 
     // WebSocket 接続: GET /ws?roomId=XXXX
-    if (url.pathname === "/ws") {
-      let roomId = url.searchParams.get("roomId");
-      if (!roomId) {
-        roomId = generateRoomId();
-      }
-      const id = env.BATTLE_ROOM.idFromName(roomId);
-      const stub = env.BATTLE_ROOM.get(id);
-      const modifiedRequest = new Request(request.url, request);
-      return stub.fetch(modifiedRequest);
-    }
+if (url.pathname === "/ws") {
+  if (request.headers.get("Upgrade") !== "websocket") {
+    return new Response("Expected WebSocket upgrade", { status: 426 });
+  }
+
+  let roomId = url.searchParams.get("roomId");
+  if (!roomId) {
+    roomId = generateRoomId();
+  }
+
+  const id = env.BATTLE_ROOM.idFromName(roomId);
+  const stub = env.BATTLE_ROOM.get(id);
+
+  return stub.fetch(request);
+}
 
     return new Response("Battle Tetris Worker", {
       headers: { "Content-Type": "text/plain", ...corsHeaders },

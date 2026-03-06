@@ -48,22 +48,22 @@ export class BattleRoom extends DurableObject {
   }
 
   private handleWebSocket(ws: WebSocket, playerId: string, roomId: string) {
-    this.ctx.acceptWebSocket(ws);
+  ws.accept();
 
-    ws.addEventListener("message", (event) => {
-      const msg = parseMessage(event.data as string);
-      if (!msg) return;
-      this.handleMessage(playerId, ws, msg, roomId);
-    });
+  ws.addEventListener("message", (event) => {
+    const msg = parseMessage(event.data as string);
+    if (!msg) return;
+    this.handleMessage(playerId, ws, msg, roomId);
+  });
 
-    ws.addEventListener("close", () => {
-      this.handleDisconnect(playerId);
-    });
+  ws.addEventListener("close", () => {
+    this.handleDisconnect(playerId);
+  });
 
-    ws.addEventListener("error", () => {
-      this.handleDisconnect(playerId);
-    });
-  }
+  ws.addEventListener("error", () => {
+    this.handleDisconnect(playerId);
+  });
+}
 
   private handleMessage(
     playerId: string,
