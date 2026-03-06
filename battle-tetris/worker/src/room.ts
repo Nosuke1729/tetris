@@ -32,20 +32,19 @@ export class BattleRoom extends DurableObject {
     super(state, env);
   }
 
-  async fetch(request: Request): Promise<Response> {
-    if (request.headers.get("Upgrade") !== "websocket") {
-      return new Response("Expected WebSocket", { status: 426 });
-    }
+async fetch(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const roomId = url.searchParams.get("roomId") || this.generateRoomId();
+  const playerId = crypto.randomUUID();
 
-    const url = new URL(request.url);
-    const roomId = url.searchParams.get("roomId") || this.generateRoomId();
-    const playerId = crypto.randomUUID();
+  const pair = new WebSocketPair();
+  const client = pair[0];
+  const server = pair[1];
 
-    const { 0: client, 1: server } = new WebSocketPair();
-    this.handleWebSocket(server, playerId, roomId);
+  this.handleWebSocket(server, playerId, roomId);
 
-    return new Response(null, { status: 101, webSocket: client });
-  }
+  return new Response(null, { status: 101, webSocket: client });
+}
 
   private handleWebSocket(ws: WebSocket, playerId: string, roomId: string) {
   ws.accept();
