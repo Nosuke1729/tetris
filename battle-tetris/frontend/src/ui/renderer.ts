@@ -87,7 +87,7 @@ export class Renderer {
 
     // ゴミ量インジケーター (右側)
     if (pendingGarbage > 0) {
-      const barX = ox + BOARD_WIDTH * cs + 4;
+      const barX = ox + BOARD_WIDTH * cs - 8;
       const barH = Math.min(pendingGarbage * cs, VISIBLE_HEIGHT * cs);
       ctx.fillStyle = "#ff3333";
       ctx.fillRect(barX, oy + VISIBLE_HEIGHT * cs - barH, 6, barH);
