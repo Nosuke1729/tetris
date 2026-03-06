@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Battle Tetris Web</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@700;900&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0a0f;--surface:#111118;--border:#2a2a3a;
+  --accent:#00cfff;--accent2:#ff8800;--danger:#ff3333;
+  --success:#44ee88;--text:#e0e0e8;--muted:#555566;
+  --mono:'Share Tech Mono','Courier New',monospace;
+  --head:'Orbitron',monospace;
+}
+body{background:var(--bg);color:var(--text);font-family:var(--mono);
+  min-height:100vh;display:flex;align-items:center;justify-content:center;}
+.screen{width:100%;min-height:100vh;display:flex;align-items:center;
+  justify-content:center;padding:20px;}
+.btn{display:inline-block;padding:10px 24px;border:2px solid var(--border);
+  background:transparent;color:var(--text);font-family:var(--mono);font-size:14px;
+  cursor:pointer;letter-spacing:1px;transition:all .15s;text-transform:uppercase;}
+.btn:hover{border-color:var(--accent);color:var(--accent);}
+.btn:active{transform:scale(.97);}
+.btn:disabled{opacity:.4;cursor:not-allowed;}
+.btn-primary{border-color:var(--accent);color:var(--accent);}
+.btn-primary:hover{background:var(--accent);color:#000;}
+.btn-secondary{border-color:var(--accent2);color:var(--accent2);}
+.btn-secondary:hover{background:var(--accent2);color:#000;}
+.btn-danger{border-color:var(--danger);color:var(--danger);}
+.btn-danger:hover{background:var(--danger);color:#fff;}
+.btn-outline{border-color:var(--muted);color:var(--muted);}
+.btn-outline:hover{border-color:var(--text);color:var(--text);}
+.btn-small{padding:6px 14px;font-size:12px;}
+.btn-group{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;}
+/* Title */
+.title-wrapper{display:flex;flex-direction:column;align-items:center;gap:28px;max-width:500px;width:100%;}
+.game-title{font-family:var(--head);font-size:52px;font-weight:900;text-align:center;
+  line-height:1.1;color:var(--accent);
+  text-shadow:0 0 30px rgba(0,207,255,.6),0 0 60px rgba(0,207,255,.2);letter-spacing:4px;}
+.game-title span{color:var(--accent2);text-shadow:0 0 30px rgba(255,136,0,.6);}
+.title-form{display:flex;flex-direction:column;gap:16px;width:100%;align-items:center;}
+.title-form label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);
+  letter-spacing:1px;text-transform:uppercase;width:100%;max-width:280px;}
+input[type=text],input[type=password]{background:var(--surface);border:1px solid var(--border);
+  color:var(--text);font-family:var(--mono);font-size:16px;padding:10px 12px;outline:none;width:100%;
+  transition:border-color .2s;}
+input[type=text]:focus{border-color:var(--accent);}
+.controls-help{background:var(--surface);border:1px solid var(--border);padding:16px 24px;width:100%;}
+.controls-help h3{font-size:11px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:10px;}
+.keytable{width:100%;border-collapse:collapse;font-size:13px;}
+.keytable td{padding:4px 8px;}
+.keytable td:first-child{color:var(--accent);font-weight:bold;white-space:nowrap;width:80px;}
+.ws-status{font-size:11px;color:var(--muted);letter-spacing:1px;}
+/* Room */
+.room-wrapper{display:flex;flex-direction:column;gap:20px;max-width:420px;width:100%;}
+.room-wrapper h2{font-family:var(--head);color:var(--accent);letter-spacing:3px;text-align:center;}
+.room-actions{display:flex;flex-direction:column;gap:12px;}
+.join-row{display:flex;gap:8px;}
+.join-row input{flex:1;text-transform:uppercase;}
+.room-id-box{background:var(--surface);border:1px solid var(--border);padding:12px 16px;
+  display:flex;align-items:center;gap:12px;font-size:15px;}
+.room-id-box strong{color:var(--accent);font-size:20px;letter-spacing:3px;}
+.player-list{padding:8px 0;font-size:14px;color:var(--success);}
+.player-list div::before{content:"▸ ";}
+.room-status{font-size:12px;color:var(--muted);}
+.room-btns{display:flex;gap:10px;flex-wrap:wrap;}
+/* Game */
+.game-wrapper{display:flex;flex-direction:column;align-items:center;gap:8px;}
+.game-topbar{display:flex;gap:10px;width:100%;justify-content:flex-end;}
+.canvas-container{position:relative;display:inline-block;}
+#game-canvas{display:block;image-rendering:pixelated;}
+.countdown-overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-family:var(--head);font-size:96px;font-weight:900;color:var(--accent);
+  background:rgba(0,0,0,.55);text-shadow:0 0 40px var(--accent);pointer-events:none;
+  animation:countdownPulse .3s ease;}
+@keyframes countdownPulse{from{transform:scale(1.4);opacity:0}to{transform:scale(1);opacity:1}}
+/* Result */
+.result-wrapper{display:flex;flex-direction:column;align-items:center;gap:28px;
+  max-width:400px;width:100%;text-align:center;}
+.result-label{font-family:var(--head);font-size:44px;font-weight:900;letter-spacing:4px;
+  animation:fadeInUp .4s ease;}
+@keyframes fadeInUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+.result-stats{display:flex;flex-direction:column;gap:8px;background:var(--surface);
+  border:1px solid var(--border);padding:20px 32px;font-size:18px;min-width:240px;}
+.result-btns{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;}
+body::after{content:'';position:fixed;inset:0;
+  background:repeating-linear-gradient(to bottom,transparent 0,transparent 2px,rgba(0,0,0,.03) 2px,rgba(0,0,0,.03) 4px);
+  pointer-events:none;z-index:9999;}
+</style>
+</head>
+<body>
+
+<!-- TITLE -->
+<div id="screen-title" class="screen">
+  <div class="title-wrapper">
+    <h1 class="game-title">BATTLE<br><span>TETRIS</span></h1>
+    <div class="title-form">
+      <label>プレイヤー名
+        <input id="input-name" type="text" placeholder="Player" maxlength="16"/>
+      </label>
+      <div class="btn-group">
+        <button id="btn-single" class="btn btn-primary">▶ シングルプレイ</button>
+        <button id="btn-battle" class="btn btn-secondary">⚔ 対戦 (要サーバー)</button>
+      </div>
+    </div>
+    <div class="controls-help">
+      <h3>操作説明</h3>
+      <table class="keytable">
+        <tr><td>← →</td><td>左右移動</td></tr>
+        <tr><td>↓</td><td>ソフトドロップ</td></tr>
+        <tr><td>Space</td><td>ハードドロップ</td></tr>
+        <tr><td>↑ / X</td><td>右回転</td></tr>
+        <tr><td>Z</td><td>左回転</td></tr>
+        <tr><td>C</td><td>ホールド</td></tr>
+        <tr><td>P</td><td>ポーズ/再開</td></tr>
+        <tr><td>Esc</td><td>退出</td></tr>
+      </table>
+    </div>
+    <div id="ws-status" class="ws-status">● シングルプレイのみ利用可能</div>
+  </div>
+</div>
+
+<!-- ROOM -->
+<div id="screen-room" class="screen" style="display:none">
+  <div class="room-wrapper">
+    <h2>対戦ルーム</h2>
+    <div class="room-actions">
+      <button id="btn-create-room" class="btn btn-primary">部屋を作成</button>
+      <div class="join-row">
+        <input id="input-room-id" type="text" placeholder="部屋ID" maxlength="8"/>
+        <button id="btn-join-room" class="btn btn-secondary">参加</button>
+      </div>
+    </div>
+    <div id="room-info" style="display:none">
+      <div class="room-id-box">
+        部屋ID: <strong id="room-id-display"></strong>
+        <button id="btn-copy-room" class="btn btn-small">コピー</button>
+      </div>
+      <div id="player-list" class="player-list"></div>
+      <div id="room-status-txt" class="room-status"></div>
+      <div class="room-btns">
+        <button id="btn-ready" class="btn btn-primary" style="display:none">準備完了</button>
+        <button id="btn-start" class="btn btn-primary" style="display:none">ゲーム開始</button>
+      </div>
+    </div>
+    <button id="btn-back-title" class="btn btn-outline">← 戻る</button>
+  </div>
+</div>
+
+<!-- GAME -->
+<div id="screen-game" class="screen" style="display:none">
+  <div class="game-wrapper">
+    <div class="game-topbar">
+      <button id="btn-pause" class="btn btn-small">一時停止</button>
+      <button id="btn-exit-game" class="btn btn-small btn-danger">退出</button>
+    </div>
+    <div class="canvas-container">
+      <canvas id="game-canvas"></canvas>
+      <div id="countdown-overlay" class="countdown-overlay" style="display:none"></div>
+    </div>
+  </div>
+</div>
+
+<!-- RESULT -->
+<div id="screen-result" class="screen" style="display:none">
+  <div class="result-wrapper">
+    <h2 id="result-label" class="result-label">GAME OVER</h2>
+    <div class="result-stats">
+      <p id="result-score"></p>
+      <p id="result-lines"></p>
+      <p id="result-level"></p>
+    </div>
+    <div class="result-btns">
+      <button id="btn-rematch" class="btn btn-primary" style="display:none">再戦</button>
+      <button id="btn-play-again" class="btn btn-primary">もう一度</button>
+      <button id="btn-back-title2" class="btn btn-outline">タイトルへ</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// 定数
+// ============================================================
+const BW=10,BH=22,VH=20;
+const LOCK_MS=500, SOFT_MS=50;
+const FALL_INT=[800,720,630,550,470,380,300,220,130,100,80,80,80,70,70,70,50,50,50,30];
+const CS=30,MINI=14,NCS=24;
+
+const SHAPES={
+  I:[[[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],[[0,0,1,0],[0,0,1,0],[0,0,1,0],[0,0,1,0]],[[0,0,0,0],[0,0,0,0],[1,1,1,1],[0,0,0,0]],[[0,1,0,0],[0,1,0,0],[0,1,0,0],[0,1,0,0]]],
+  O:[[[0,1,1,0],[0,1,1,0],[0,0,0,0]],[[0,1,1,0],[0,1,1,0],[0,0,0,0]],[[0,1,1,0],[0,1,1,0],[0,0,0,0]],[[0,1,1,0],[0,1,1,0],[0,0,0,0]]],
+  T:[[[0,1,0],[1,1,1],[0,0,0]],[[0,1,0],[0,1,1],[0,1,0]],[[0,0,0],[1,1,1],[0,1,0]],[[0,1,0],[1,1,0],[0,1,0]]],
+  S:[[[0,1,1],[1,1,0],[0,0,0]],[[0,1,0],[0,1,1],[0,0,1]],[[0,0,0],[0,1,1],[1,1,0]],[[1,0,0],[1,1,0],[0,1,0]]],
+  Z:[[[1,1,0],[0,1,1],[0,0,0]],[[0,0,1],[0,1,1],[0,1,0]],[[0,0,0],[1,1,0],[0,1,1]],[[0,1,0],[1,1,0],[1,0,0]]],
+  J:[[[1,0,0],[1,1,1],[0,0,0]],[[0,1,1],[0,1,0],[0,1,0]],[[0,0,0],[1,1,1],[0,0,1]],[[0,1,0],[0,1,0],[1,1,0]]],
+  L:[[[0,0,1],[1,1,1],[0,0,0]],[[0,1,0],[0,1,0],[0,1,1]],[[0,0,0],[1,1,1],[1,0,0]],[[1,1,0],[0,1,0],[0,1,0]]],
+};
+const COLORS={I:"#00cfff",O:"#ffd700",T:"#cc44ff",S:"#44ee44",Z:"#ff4444",J:"#4488ff",L:"#ff8800"};
+const ID_COLOR=["transparent",...Object.values(COLORS),"#888888"];
+const PIECE_ID={I:1,O:2,T:3,S:4,Z:5,J:6,L:7};
+const PIECES=["I","O","T","S","Z","J","L"];
+
+const WK_DEF={
+  "0->1":[[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]],
+  "1->0":[[0,0],[1,0],[1,-1],[0,2],[1,2]],
+  "1->2":[[0,0],[1,0],[1,-1],[0,2],[1,2]],
+  "2->1":[[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]],
+  "2->3":[[0,0],[1,0],[1,1],[0,-2],[1,-2]],
+  "3->2":[[0,0],[-1,0],[-1,-1],[0,2],[-1,2]],
+  "3->0":[[0,0],[-1,0],[-1,-1],[0,2],[-1,2]],
+  "0->3":[[0,0],[1,0],[1,1],[0,-2],[1,-2]],
+};
+const WK_I={
+  "0->1":[[0,0],[-2,0],[1,0],[-2,-1],[1,2]],
+  "1->0":[[0,0],[2,0],[-1,0],[2,1],[-1,-2]],
+  "1->2":[[0,0],[-1,0],[2,0],[-1,2],[2,-1]],
+  "2->1":[[0,0],[1,0],[-2,0],[1,-2],[-2,1]],
+  "2->3":[[0,0],[2,0],[-1,0],[2,1],[-1,-2]],
+  "3->2":[[0,0],[-2,0],[1,0],[-2,-1],[1,2]],
+  "3->0":[[0,0],[1,0],[-2,0],[1,-2],[-2,1]],
+  "0->3":[[0,0],[-1,0],[2,0],[-1,2],[2,-1]],
+};
+
+// ============================================================
+// RNG
+// ============================================================
+function mkRng(seed){
+  let s=seed>>>0;
+  return()=>{
+    s|=0;s=(s+0x6d2b79f5)|0;
+    let t=Math.imul(s^(s>>>15),1|s);
+    t=(t+Math.imul(t^(t>>>7),61|t))^t;
+    return((t^(t>>>14))>>>0)/4294967296;
+  };
+}
+function shuffle(arr,rng){
+  for(let i=arr.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}
+  return arr;
+}
+
+// ============================================================
+// Board 純関数
+// ============================================================
+function emptyBoard(){return Array.from({length:BH},()=>Array(BW).fill(0));}
+function cloneBoard(b){return b.map(r=>[...r]);}
+function getCells(type,x,y,rot){
+  const sh=SHAPES[type][rot],cells=[];
+  for(let r=0;r<sh.length;r++)for(let c=0;c<sh[r].length;c++)if(sh[r][c])cells.push({x:x+c,y:y+r});
+  return cells;
+}
+function collides(board,type,x,y,rot){
+  for(const c of getCells(type,x,y,rot)){
+    if(c.x<0||c.x>=BW||c.y>=BH)return true;
+    if(c.y>=0&&board[c.y][c.x]!==0)return true;
+  }
+  return false;
+}
+function place(board,type,x,y,rot){
+  const b=cloneBoard(board),id=PIECE_ID[type];
+  for(const c of getCells(type,x,y,rot))if(c.y>=0)b[c.y][c.x]=id;
+  return b;
+}
+function filledRows(board){return board.map((r,i)=>r.every(c=>c!==0)?i:-1).filter(i=>i>=0);}
+function clearLines(board,rows){
+  const b=board.filter((_,i)=>!rows.includes(i));
+  while(b.length<BH)b.unshift(Array(BW).fill(0));
+  return b;
+}
+function ghostY(board,type,x,y,rot){
+  let gy=y;while(!collides(board,type,x,gy+1,rot))gy++;return gy;
+}
+function addGarbage(board,count,rng){
+  const b=cloneBoard(board);
+  const hx=Math.floor(rng()*BW);
+  for(let i=0;i<count;i++){
+    b.shift();
+    const row=Array(BW).fill(8);row[hx]=0;b.push(row);
+  }
+  return b;
+}
+
+// ============================================================
+// T-Spin
+// ============================================================
+function detectTSpin(board,p){
+  if(p.type!=="T"||!p.lastRotOk||p.lastAction!=="rotate")return false;
+  const cx=p.x+1,cy=p.y+1;
+  const corners=[{x:cx-1,y:cy-1},{x:cx+1,y:cy-1},{x:cx-1,y:cy+1},{x:cx+1,y:cy+1}];
+  let filled=0;
+  for(const c of corners){
+    if(c.x<0||c.x>=BW||c.y<0||c.y>=BH)filled++;
+    else if(board[c.y][c.x]!==0)filled++;
+  }
+  return filled>=3;
+}
+
+// ============================================================
+// SRS 回転
+// ============================================================
+function tryRotate(board,type,x,y,rot,dir){
+  const nr=dir==="cw"?(rot+1)%4:(rot+3)%4;
+  const key=`${rot}->${nr}`;
+  const kicks=type==="I"?WK_I[key]:WK_DEF[key];
+  if(!kicks)return null;
+  for(const[dx,dy]of kicks){
+    const nx=x+dx,ny=y-dy;
+    if(!collides(board,type,nx,ny,nr))return{x:nx,y:ny,rot:nr};
+  }
+  return null;
+}
+
+// ============================================================
+// Scoring
+// ============================================================
+const ST={single:100,double:300,triple:500,tetris:800,t0:400,t1:800,t2:1200,t3:1600};
+const AT={single:0,double:1,triple:2,tetris:4,t0:0,t1:2,t2:4,t3:6};
+
+function calcScore(lines,tspin,combo,b2b){
+  let bs=0,ba=0,label="",b2bEl=false;
+  if(tspin){
+    bs=[ST.t0,ST.t1,ST.t2,ST.t3][lines]??0;
+    ba=[AT.t0,AT.t1,AT.t2,AT.t3][lines]??0;
+    label=["T-Spin","T-Spin Single","T-Spin Double","T-Spin Triple"][lines]??"T-Spin";
+    b2bEl=lines>0;
+  }else{
+    const L={1:[ST.single,AT.single,"Single"],2:[ST.double,AT.double,"Double"],3:[ST.triple,AT.triple,"Triple"],4:[ST.tetris,AT.tetris,"Tetris!"]}[lines];
+    if(L){[bs,ba,label]=L;b2bEl=lines===4;}
+  }
+  const isB2B=b2bEl&&b2b;
+  if(isB2B&&lines>0){bs=Math.floor(bs*1.5);ba+=1;label="B2B "+label;}
+  const nc=lines>0?combo+1:0;
+  const cb=nc>0?nc*50:0;
+  const ca=nc<=2?0:nc<=4?1:nc<=6?2:3;
+  return{score:bs+cb,attack:ba+ca,newCombo:nc,newB2B:b2bEl?true:(lines===0?b2b:false),label};
+}
+
+// ============================================================
+// GameEngine
+// ============================================================
+class GameEngine{
+  constructor(seed,onLock,onGameOver,onClear){
+    this.onLock=onLock;this.onGameOver=onGameOver;this.onClear=onClear;
+    this.rng=mkRng(seed);
+    this.gRng=mkRng(seed^0xdeadbeef);
+    this.bag=[];this.board=emptyBoard();
+    this.active=null;this.hold=null;this.next=[];
+    this.score=0;this.lines=0;this.level=1;
+    this.combo=0;this.b2b=false;this.pending=0;
+    this.usedHold=false;this.over=false;this.paused=false;
+    this.lockTimer=null;this.soft=false;this.lastFall=0;
+    this.fillBag();this.fillNext();this.spawn();
+  }
+  fillBag(){this.bag.push(...shuffle([...PIECES],this.rng));}
+  fillNext(){while(this.next.length<7){if(!this.bag.length)this.fillBag();this.next.push(this.bag.shift());}}
+  spawn(){
+    this.fillNext();
+    const type=this.next.shift();
+    const x=type==="O"?3:3,y=0;
+    const p={type,x,y,rot:0,lastAction:"spawn",lastRotOk:false};
+    if(collides(this.board,type,x,y,0)){this.over=true;this.onGameOver();return;}
+    this.active=p;this.usedHold=false;this.cancelLock();
+  }
+  // Input
+  left(){if(!this.ok())return;const p=this.active;if(!collides(this.board,p.type,p.x-1,p.y,p.rot)){p.x--;p.lastAction="move";this.resetLock();}}
+  right(){if(!this.ok())return;const p=this.active;if(!collides(this.board,p.type,p.x+1,p.y,p.rot)){p.x++;p.lastAction="move";this.resetLock();}}
+  rotateCW(){this.doRot("cw");}
+  rotateCCW(){this.doRot("ccw");}
+  doRot(dir){
+    if(!this.ok())return;
+    const p=this.active;
+    const r=tryRotate(this.board,p.type,p.x,p.y,p.rot,dir);
+    if(r){p.x=r.x;p.y=r.y;p.rot=r.rot;p.lastAction="rotate";p.lastRotOk=true;this.resetLock();}
+    else p.lastRotOk=false;
+  }
+  setSoft(v){this.soft=v;}
+  hard(){
+    if(!this.ok())return;
+    const p=this.active;
+    const gy=ghostY(this.board,p.type,p.x,p.y,p.rot);
+    this.score+=((gy-p.y)*2);p.y=gy;p.lastAction="hardDrop";this.lock();
+  }
+  holdPiece(){
+    if(!this.ok()||this.usedHold)return;
+    const p=this.active;const prev=this.hold;
+    this.hold=p.type;this.usedHold=true;
+    if(prev){this.active={type:prev,x:3,y:0,rot:0,lastAction:"spawn",lastRotOk:false};}
+    else this.spawn();
+    this.cancelLock();
+  }
+  tick(now){
+    if(this.over||this.paused||!this.active)return;
+    const iv=this.soft?SOFT_MS:(FALL_INT[Math.min(this.level-1,FALL_INT.length-1)]);
+    if(now-this.lastFall>=iv){this.fall();this.lastFall=now;}
+  }
+  fall(){
+    const p=this.active;
+    if(!collides(this.board,p.type,p.x,p.y+1,p.rot)){
+      p.y++;if(this.soft)this.score+=1;
+      p.lastAction=this.soft?"softDrop":"move";this.cancelLock();
+    }else{if(this.lockTimer===null)this.lockTimer=setTimeout(()=>this.lock(),LOCK_MS);}
+  }
+  resetLock(){if(this.lockTimer!==null){clearTimeout(this.lockTimer);this.lockTimer=setTimeout(()=>this.lock(),LOCK_MS);}}
+  cancelLock(){if(this.lockTimer!==null){clearTimeout(this.lockTimer);this.lockTimer=null;}}
+  lock(){
+    this.cancelLock();
+    const p=this.active;
+    const spin=detectTSpin(this.board,p);
+    // ゴミ着弾
+    let pc=0;
+    if(this.pending>0){this.board=addGarbage(this.board,this.pending,this.gRng);pc=this.pending;this.pending=0;}
+    // 固定
+    this.board=place(this.board,p.type,p.x,p.y,p.rot);
+    const fr=filledRows(this.board);const lc=fr.length;
+    if(lc>0)this.board=clearLines(this.board,fr);
+    // スコア
+    let attack=0,label="";
+    if(lc>0||spin){
+      const res=calcScore(lc,spin,this.combo,this.b2b);
+      this.score+=res.score;this.lines+=lc;this.combo=res.newCombo;this.b2b=res.newB2B;
+      this.level=Math.floor(this.lines/10)+1;attack=res.attack;label=res.label;
+      this.onClear({label,attack,lc,spin});
+    }else{this.combo=0;}
+    this.onLock({board:this.board.map(r=>[...r]),linesCleared:lc,isTSpin:spin,combo:this.combo,attack,pendingConsumed:pc,score:this.score});
+    this.active=null;this.spawn();
+  }
+  addGarbage(n){this.pending+=n;}
+  getGhostY(){const p=this.active;if(!p)return 0;return ghostY(this.board,p.type,p.x,p.y,p.rot);}
+  pause(){this.paused=true;}
+  resume(){this.paused=false;this.lastFall=performance.now();}
+  ok(){return!this.over&&!this.paused&&this.active!==null;}
+}
+
+// ============================================================
+// Renderer
+// ============================================================
+class Renderer{
+  constructor(canvas,cs){this.canvas=canvas;this.ctx=canvas.getContext("2d");this.cs=cs;this.ox=0;this.oy=0;}
+  clear(){this.ctx.clearRect(0,0,this.canvas.width,this.canvas.height);}
+  drawBoard(board,active,gy,pending){
+    const{ctx,cs}=this;const ox=this.ox,oy=this.oy;const H=BH-VH;
+    ctx.fillStyle="#111";ctx.fillRect(ox,oy,cs*BW,cs*VH);
+    ctx.strokeStyle="#222";ctx.lineWidth=.5;
+    for(let r=0;r<=VH;r++){ctx.beginPath();ctx.moveTo(ox,oy+r*cs);ctx.lineTo(ox+BW*cs,oy+r*cs);ctx.stroke();}
+    for(let c=0;c<=BW;c++){ctx.beginPath();ctx.moveTo(ox+c*cs,oy);ctx.lineTo(ox+c*cs,oy+VH*cs);ctx.stroke();}
+    for(let r=H;r<BH;r++)for(let c=0;c<BW;c++){const v=board[r][c];if(v)this.cell(ctx,ox+c*cs,oy+(r-H)*cs,cs,ID_COLOR[v]);}
+    if(active&&gy!==null)for(const c of getCells(active.type,active.x,gy,active.rot))if(c.y>=H){ctx.fillStyle="rgba(255,255,255,0.15)";ctx.fillRect(ox+c.x*cs+1,oy+(c.y-H)*cs+1,cs-2,cs-2);}
+    if(active){const col=COLORS[active.type];for(const c of getCells(active.type,active.x,active.y,active.rot))if(c.y>=H)this.cell(ctx,ox+c.x*cs,oy+(c.y-H)*cs,cs,col);}
+    if(pending>0){const bh=Math.min(pending*cs,VH*cs);ctx.fillStyle="#ff3333";ctx.fillRect(ox+BW*cs+3,oy+VH*cs-bh,6,bh);}
+    ctx.strokeStyle="#444";ctx.lineWidth=2;ctx.strokeRect(ox,oy,cs*BW,cs*VH);
+  }
+  cell(ctx,x,y,cs,color){ctx.fillStyle=color;ctx.fillRect(x+1,y+1,cs-2,cs-2);ctx.fillStyle="rgba(255,255,255,0.2)";ctx.fillRect(x+1,y+1,cs-2,3);ctx.fillRect(x+1,y+1,3,cs-2);}
+  miniBoard(board,x,y,mc){
+    const ctx=this.ctx;const H=BH-VH;
+    ctx.fillStyle="#0a0a0a";ctx.fillRect(x,y,BW*mc,VH*mc);
+    ctx.strokeStyle="#333";ctx.lineWidth=1;ctx.strokeRect(x,y,BW*mc,VH*mc);
+    for(let r=H;r<BH;r++)for(let c=0;c<BW;c++){const v=board[r][c];if(v){ctx.fillStyle=ID_COLOR[v];ctx.fillRect(x+c*mc+.5,y+(r-H)*mc+.5,mc-1,mc-1);}}
+  }
+  preview(type,x,y,cs){
+    const ctx=this.ctx;const col=COLORS[type];
+    ctx.fillStyle="#1a1a1a";ctx.fillRect(x,y,cs*4,cs*2);
+    const cells=getCells(type,0,0,0);
+    const mnx=Math.min(...cells.map(c=>c.x)),mny=Math.min(...cells.map(c=>c.y));
+    const mxx=Math.max(...cells.map(c=>c.x)),mxy=Math.max(...cells.map(c=>c.y));
+    const sx=x+(cs*4-(mxx-mnx+1)*cs)/2,sy=y+(cs*2-(mxy-mny+1)*cs)/2;
+    for(const c of cells)this.cell(ctx,sx+(c.x-mnx)*cs,sy+(c.y-mny)*cs,cs,col);
+  }
+}
+
+// ============================================================
+// Input
+// ============================================================
+const KEY_MAP={ArrowLeft:"left",ArrowRight:"right",ArrowDown:"sds",Space:"hard",KeyZ:"ccw",ArrowUp:"cw",KeyX:"cw",KeyC:"hold",KeyP:"pause",Escape:"exit"};
+class Input{
+  constructor(handler){this.h=handler;this.das={};this.arr={};this.down=new Set();this.kd=this.kd.bind(this);this.ku=this.ku.bind(this);window.addEventListener("keydown",this.kd);window.addEventListener("keyup",this.ku);}
+  kd(e){if(e.repeat)return;const a=KEY_MAP[e.code];if(!a)return;e.preventDefault();this.down.add(e.code);this.h(a==="sds"?"softStart":a);if(a==="left"||a==="right"){this.das[e.code]=setTimeout(()=>{this.arr[e.code]=setInterval(()=>{if(this.down.has(e.code))this.h(a);else clearInterval(this.arr[e.code]);},40);},120);}}
+  ku(e){const a=KEY_MAP[e.code];if(!a)return;this.down.delete(e.code);if(this.das[e.code]){clearTimeout(this.das[e.code]);delete this.das[e.code];}if(this.arr[e.code]){clearInterval(this.arr[e.code]);delete this.arr[e.code];}if(a==="sds")this.h("softEnd");}
+  destroy(){window.removeEventListener("keydown",this.kd);window.removeEventListener("keyup",this.ku);Object.values(this.das).forEach(clearTimeout);Object.values(this.arr).forEach(clearInterval);}
+}
+
+// ============================================================
+// WsClient (対戦用)
+// ============================================================
+class WsClient{
+  constructor(url){this.url=url;this.ws=null;this.handlers=[];this.connected=false;this.rsStart=0;}
+  connect(onOpen){
+    if(this.ws)this.ws.close();
+    this.ws=new WebSocket(this.url);
+    this.ws.onopen=()=>{this.connected=true;this.rsStart=0;onOpen&&onOpen();};
+    this.ws.onmessage=(e)=>{try{const m=JSON.parse(e.data);this.handlers.forEach(h=>h(m));}catch{}};
+    this.ws.onclose=()=>{this.connected=false;this.sched();};
+    this.ws.onerror=()=>{};
+  }
+  sched(){if(this.rsStart===0)this.rsStart=Date.now();if(Date.now()-this.rsStart>15000)return;setTimeout(()=>this.connect(),2000);}
+  send(msg){if(this.ws?.readyState===WebSocket.OPEN)this.ws.send(JSON.stringify(msg));}
+  on(h){this.handlers.push(h);return()=>{this.handlers=this.handlers.filter(x=>x!==h);};}
+  disconnect(){this.ws?.close();this.ws=null;this.connected=false;}
+}
+
+// ============================================================
+// App
+// ============================================================
+let engine=null,renderer=null,input=null,ws=null,raf=null,snapTimer=null;
+let gameMode="single",playerName="Player",roomId="",isHost=false;
+let opBoard=emptyBoard(),opScore=0,opCombo=0,opB2B=false,opDanger=false;
+let clearLabel="",clearTimer=null;
+
+function $$(id){return document.getElementById(id);}
+
+function showScreen(id){
+  ["title","room","game","result"].forEach(s=>$$("screen-"+s).style.display=s===id?"":"none");
+}
+
+// Title
+$$("btn-single").onclick=()=>{playerName=$$("input-name").value.trim()||"Player";gameMode="single";startGame(Math.floor(Math.random()*0x7fffffff));};
+$$("btn-battle").onclick=()=>{playerName=$$("input-name").value.trim()||"Player";gameMode="battle";showScreen("room");initWs();};
+
+// Room
+function initWs(){
+  const wsUrl=(window.__WS_URL__||`ws://${location.hostname}:8787`)+"/ws";
+  ws=new WsClient(wsUrl);
+  ws.connect(()=>{$$("ws-status").textContent="● 接続中";$$("ws-status").style.color="#4f4";});
+  ws.on(handleServer);
+}
+$$("btn-create-room").onclick=()=>ws?.send({type:"create_room",playerName});
+$$("btn-join-room").onclick=()=>{const rid=$$("input-room-id").value.trim().toUpperCase();if(!rid)return;ws?.send({type:"join_room",roomId:rid,playerName});};
+$$("btn-ready").onclick=()=>{ws?.send({type:"ready"});$$("btn-ready").textContent="準備完了！";$$("btn-ready").disabled=true;};
+$$("btn-start").onclick=()=>ws?.send({type:"start_game"});
+$$("btn-copy-room").onclick=()=>navigator.clipboard.writeText(roomId).then(()=>alert("コピー: "+roomId));
+$$("btn-back-title").onclick=()=>{ws?.send({type:"leave_room"});showScreen("title");};
+
+function handleServer(msg){
+  switch(msg.type){
+    case"room_created":roomId=msg.roomId;isHost=true;$$("room-id-display").textContent=msg.roomId;$$("room-info").style.display="";$$("room-status-txt").textContent="部屋を作成しました。対戦相手を待っています…";$$("btn-ready").style.display="";break;
+    case"room_joined":roomId=msg.roomId;isHost=msg.isHost;$$("room-id-display").textContent=msg.roomId;$$("room-info").style.display="";$$("player-list").innerHTML=msg.players.map(p=>`<div>${p.name}</div>`).join("");$$("btn-ready").style.display="";if(isHost&&msg.players.length===2)$$("btn-start").style.display="";break;
+    case"player_joined":$$("room-status-txt").textContent="対戦相手が参加！";$$("player-list").innerHTML+=`<div>${msg.player.name}</div>`;if(isHost)$$("btn-start").style.display="";break;
+    case"player_left":$$("room-status-txt").textContent="相手が退出しました。";$$("btn-start").style.display="none";break;
+    case"countdown":$$("countdown-overlay").textContent=msg.seconds>0?`${msg.seconds}`:"GO!";$$("countdown-overlay").style.display="";if(msg.seconds===0)setTimeout(()=>$$("countdown-overlay").style.display="none",700);break;
+    case"game_start":startGame(msg.seed);break;
+    case"garbage_received":engine?.addGarbage(msg.amount);break;
+    case"opponent_update":opBoard=msg.board;opScore=msg.score;opCombo=msg.combo;opB2B=msg.b2b;opDanger=msg.danger;break;
+    case"match_result":endGame(msg.result);break;
+    case"error":alert("エラー: "+msg.message);break;
+  }
+}
+
+// Game
+function startGame(seed){
+  showScreen("game");opBoard=emptyBoard();clearLabel="";
+  const canvas=$$("game-canvas");
+  const battleW=MINI*BW+80;
+  canvas.width=150+CS*BW+150+(gameMode==="battle"?battleW:0);
+  canvas.height=CS*VH;
+  renderer=new Renderer(canvas,CS);
+  engine=new GameEngine(seed,handleLock,handleGameOver,handleClear);
+  if(input)input.destroy();
+  input=new Input(handleInput);
+  $$("btn-pause").onclick=togglePause;
+  $$("btn-exit-game").onclick=exitGame;
+  $$("countdown-overlay").style.display="none";
+  if(raf)cancelAnimationFrame(raf);
+  const loop=(now)=>{engine.tick(now);renderFrame();raf=requestAnimationFrame(loop);};
+  raf=requestAnimationFrame(loop);
+  if(gameMode==="battle")snapTimer=setInterval(sendSnap,200);
+}
+
+function handleInput(a){
+  if(!engine)return;
+  if(a==="left")engine.left();
+  else if(a==="right")engine.right();
+  else if(a==="softStart")engine.setSoft(true);
+  else if(a==="softEnd")engine.setSoft(false);
+  else if(a==="hard")engine.hard();
+  else if(a==="cw")engine.rotateCW();
+  else if(a==="ccw")engine.rotateCCW();
+  else if(a==="hold")engine.holdPiece();
+  else if(a==="pause")togglePause();
+  else if(a==="exit")exitGame();
+}
+
+function handleLock(data){
+  if(gameMode==="battle"&&ws)ws.send({type:"piece_lock",board:data.board,linesCleared:data.linesCleared,isTSpin:data.isTSpin,isB2B:false,combo:data.combo,attack:data.attack,scoreDelta:0,pendingGarbageConsumed:data.pendingConsumed});
+}
+function handleClear(r){showLabel(r.label);}
+function handleGameOver(){
+  if(gameMode==="single")endGame("single");
+  else ws?.send({type:"game_over"});
+}
+function sendSnap(){
+  if(!engine||!ws)return;
+  const p=engine.active;
+  ws.send({type:"board_snapshot",board:engine.board,activePiece:p?{type:p.type,x:p.x,y:p.y,rotation:p.rot}:null,ghostY:engine.getGhostY(),score:engine.score});
+}
+function showLabel(lbl){clearLabel=lbl;if(clearTimer)clearTimeout(clearTimer);clearTimer=setTimeout(()=>clearLabel="",1200);}
+
+// Render
+function renderFrame(){
+  if(!engine||!renderer)return;
+  const PW=150,BPX=CS*BW;
+  renderer.clear();
+  const ctx=$$("game-canvas").getContext("2d");
+  drawLeft(ctx,PW);
+  renderer.ox=PW;renderer.oy=0;
+  renderer.drawBoard(engine.board,engine.active,engine.getGhostY(),engine.pending);
+  drawRight(ctx,PW+BPX);
+  if(gameMode==="battle")drawOpp(ctx,PW+BPX+PW+10);
+  if(clearLabel){
+    ctx.save();ctx.font="bold 22px 'Share Tech Mono',monospace";ctx.fillStyle="#ffd700";
+    ctx.textAlign="center";ctx.shadowColor="#ff8800";ctx.shadowBlur=10;
+    ctx.fillText(clearLabel,PW+BPX/2,CS*VH/2);ctx.restore();
+  }
+  if(engine.paused){
+    ctx.fillStyle="rgba(0,0,0,.6)";ctx.fillRect(PW,0,BPX,CS*VH);
+    ctx.fillStyle="#fff";ctx.font="bold 32px monospace";ctx.textAlign="center";
+    ctx.fillText("PAUSED",PW+BPX/2,CS*VH/2);
+  }
+  if(engine.over){
+    ctx.fillStyle="rgba(0,0,0,.7)";ctx.fillRect(PW,0,BPX,CS*VH);
+    ctx.fillStyle="#ff4444";ctx.font="bold 28px monospace";ctx.textAlign="center";
+    ctx.fillText("GAME OVER",PW+BPX/2,CS*VH/2);
+  }
+}
+function drawLeft(ctx,w){
+  ctx.fillStyle="#0d0d0d";ctx.fillRect(0,0,w,CS*VH);
+  ctx.fillStyle="#555";ctx.font="12px monospace";ctx.textAlign="left";
+  ctx.fillText("HOLD",10,20);
+  if(engine.hold)renderer.preview(engine.hold,10,28,22);
+  ctx.fillStyle=engine.usedHold?"#444":"#888";ctx.font="10px monospace";
+  ctx.fillText(engine.usedHold?"(使用済)":"(可)",10,85);
+  ctx.fillStyle="#555";ctx.font="12px monospace";ctx.fillText("LEVEL",10,110);
+  ctx.fillStyle="#fff";ctx.font="bold 28px monospace";ctx.fillText(String(engine.level),10,140);
+  if(engine.combo>1){ctx.fillStyle="#ff8800";ctx.font="bold 14px monospace";ctx.fillText(`${engine.combo} COMBO`,10,170);}
+  if(engine.b2b){ctx.fillStyle="#00cfff";ctx.font="bold 12px monospace";ctx.fillText("B2B",10,190);}
+  if(engine.pending>0){ctx.fillStyle="#ff3333";ctx.font="bold 12px monospace";ctx.fillText(`GARBAGE:${engine.pending}`,6,220);}
+}
+function drawRight(ctx,sx){
+  ctx.fillStyle="#0d0d0d";ctx.fillRect(sx,0,150,CS*VH);
+  ctx.fillStyle="#555";ctx.font="12px monospace";ctx.textAlign="left";
+  ctx.fillText("NEXT",sx+8,20);
+  for(let i=0;i<Math.min(5,engine.next.length);i++)renderer.preview(engine.next[i],sx+8,28+i*55,NCS);
+  ctx.fillStyle="#555";ctx.font="12px monospace";ctx.fillText("SCORE",sx+8,CS*VH-100);
+  ctx.fillStyle="#fff";ctx.font="bold 18px monospace";ctx.fillText(String(engine.score),sx+8,CS*VH-78);
+  ctx.fillStyle="#555";ctx.font="12px monospace";ctx.fillText("LINES",sx+8,CS*VH-55);
+  ctx.fillStyle="#fff";ctx.font="bold 18px monospace";ctx.fillText(String(engine.lines),sx+8,CS*VH-33);
+}
+function drawOpp(ctx,sx){
+  ctx.fillStyle="#0d0d0d";ctx.fillRect(sx,0,MINI*BW+60,CS*VH);
+  ctx.fillStyle=opDanger?"#ff4444":"#555";ctx.font="bold 12px monospace";ctx.textAlign="left";
+  ctx.fillText("OPPONENT",sx+4,16);
+  renderer.miniBoard(opBoard,sx+4,22,MINI);
+  ctx.fillStyle="#888";ctx.font="11px monospace";
+  ctx.fillText(`Score:${opScore}`,sx+4,22+MINI*VH+18);
+  if(opCombo>1){ctx.fillStyle="#ff8800";ctx.fillText(`${opCombo} Combo`,sx+4,22+MINI*VH+34);}
+  if(opB2B){ctx.fillStyle="#00cfff";ctx.fillText("B2B",sx+4,22+MINI*VH+50);}
+}
+
+function togglePause(){
+  if(!engine)return;
+  if(engine.paused){engine.resume();$$("btn-pause").textContent="一時停止";}
+  else{engine.pause();$$("btn-pause").textContent="再開";}
+}
+function exitGame(){stopGame();ws?.send({type:"leave_room"});showScreen("title");}
+function stopGame(){if(raf){cancelAnimationFrame(raf);raf=null;}if(snapTimer){clearInterval(snapTimer);snapTimer=null;}if(input){input.destroy();input=null;}}
+
+function endGame(result){
+  stopGame();showScreen("result");
+  $$("result-label").textContent=result==="win"?"🏆 YOU WIN!":result==="lose"?"💀 YOU LOSE":result==="draw"?"🤝 DRAW":"GAME OVER";
+  $$("result-label").style.color=result==="win"?"#ffd700":result==="lose"?"#ff4444":"#aaa";
+  $$("result-score").textContent=`Score: ${engine?.score??0}`;
+  $$("result-lines").textContent=`Lines: ${engine?.lines??0}`;
+  $$("result-level").textContent=`Level: ${engine?.level??1}`;
+  $$("btn-rematch").style.display=gameMode==="battle"?"":"none";
+  $$("btn-rematch").onclick=()=>{ws?.send({type:"rematch"});$$("btn-rematch").textContent="申請中…";$$("btn-rematch").disabled=true;};
+  $$("btn-back-title2").onclick=()=>{ws?.send({type:"leave_room"});showScreen("title");};
+  $$("btn-play-again").style.display=gameMode==="single"?"":"none";
+  $$("btn-play-again").onclick=()=>{gameMode="single";startGame(Math.floor(Math.random()*0x7fffffff));};
+}
+</script>
+</body>
+</html>

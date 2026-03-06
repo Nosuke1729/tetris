@@ -1,0 +1,14 @@
+name = "battle-tetris-worker"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[[durable_objects.bindings]]
+name = "BATTLE_ROOM"
+class_name = "BattleRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["BattleRoom"]
+
+[dev]
+port = 8787
