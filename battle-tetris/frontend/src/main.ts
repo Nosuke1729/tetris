@@ -52,6 +52,7 @@ let clearLabelTimer: number | null = null;
 let countdownNum = 0;
 let matchResult = "";
 let gameMode: "single" | "battle" = "single";
+let roomJoined = false;
 
 // ============================================================
 // 初期化
@@ -89,29 +90,47 @@ function startSingle() {
 function showRoomSetup() {
   playerName = inp("input-name").value.trim() || "Player";
   gameMode = "battle";
+  roomId = "";
+  roomJoined = false;
+
   screenMgr.show("room");
   el("room-status").textContent = "部屋に参加するか、新しく作成してください。";
   el("room-info").style.display = "none";
   el("btn-start").style.display = "none";
   el("btn-ready").style.display = "none";
-  setupWs();
+  el("btn-ready").textContent = "準備完了！";
+  (el("btn-ready") as HTMLButtonElement).disabled = false;
+
+  enableRoomButtons();
+
+  if (ws) {
+    ws.disconnect();
+    ws = null;
+  }
+
+  el("ws-status").textContent = "● 未接続";
+  el("ws-status").style.color = "#888";
 }
 
 // ============================================================
 // WebSocket
 // ============================================================
 
-function getWsUrl(): string {
+function getWsUrl(targetRoomId?: string): string {
   const base = __WS_URL__ || `ws://${location.hostname}:8787`;
-  return base;
+  if (!targetRoomId) return base;
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}roomId=${encodeURIComponent(targetRoomId)}`;
 }
 
-function setupWs() {
+function setupWs(targetRoomId?: string, onOpen?: () => void) {
   if (ws) { ws.disconnect(); ws = null; }
-  ws = new WsClient(getWsUrl());
+
+  ws = new WsClient(getWsUrl(targetRoomId));
   ws.connect(() => {
     el("ws-status").textContent = "● 接続中";
     el("ws-status").style.color = "#4f4";
+    if (onOpen) onOpen();
   });
   ws.onMessage(handleServerMsg);
 }
@@ -119,24 +138,30 @@ function setupWs() {
 function handleServerMsg(msg: ServerMessage) {
   switch (msg.type) {
     case "room_created":
-      roomId = msg.roomId;
-      isHost = true;
-      el("room-id-display").textContent = msg.roomId;
-      el("room-info").style.display = "";
-      el("room-status").textContent = "部屋を作成しました。対戦相手を待っています…";
-      el("btn-ready").style.display = "";
-      break;
+  roomId = msg.roomId;
+  isHost = true;
+  roomJoined = true;
+  disableRoomButtons();
 
-    case "room_joined":
-      roomId = msg.roomId;
-      isHost = msg.isHost;
-      el("room-id-display").textContent = msg.roomId;
-      el("room-info").style.display = "";
-      el("room-status").textContent = `参加しました (${msg.players.length}/2)`;
-      el("player-list").innerHTML = msg.players.map(p => `<div>${p.name}</div>`).join("");
-      el("btn-ready").style.display = "";
-      if (isHost && msg.players.length === 2) el("btn-start").style.display = "";
-      break;
+  el("room-id-display").textContent = msg.roomId;
+  el("room-info").style.display = "";
+  el("room-status").textContent = "部屋を作成しました。対戦相手を待っています…";
+  el("btn-ready").style.display = "";
+  break;
+
+case "room_joined":
+  roomId = msg.roomId;
+  isHost = msg.isHost;
+  roomJoined = true;
+  disableRoomButtons();
+
+  el("room-id-display").textContent = msg.roomId;
+  el("room-info").style.display = "";
+  el("room-status").textContent = `参加しました (${msg.players.length}/2)`;
+  el("player-list").innerHTML = msg.players.map(p => `<div>${p.name}</div>`).join("");
+  el("btn-ready").style.display = "";
+  if (isHost && msg.players.length === 2) el("btn-start").style.display = "";
+  break;
 
     case "player_joined":
       el("room-status").textContent = "対戦相手が参加しました！";
@@ -192,15 +217,58 @@ function handleServerMsg(msg: ServerMessage) {
 // ルーム画面ボタン
 // ============================================================
 
+function disableRoomButtons() {
+  (el("btn-create-room") as HTMLButtonElement).disabled = true;
+  (el("btn-join-room") as HTMLButtonElement).disabled = true;
+}
+
+function enableRoomButtons() {
+  (el("btn-create-room") as HTMLButtonElement).disabled = false;
+  (el("btn-join-room") as HTMLButtonElement).disabled = false;
+}
+
 function setupRoomButtons() {
-  el("btn-create-room").onclick = () => {
-    ws?.send({ type: "create_room", playerName });
-  };
-  el("btn-join-room").onclick = () => {
-    const rid = inp("input-room-id").value.trim().toUpperCase();
-    if (!rid) return alert("部屋IDを入力してください");
+  el("btn-create-room").onclick = async () => {
+  if (roomJoined) return;
+
+  try {
+    disableRoomButtons();
+
+    const res = await fetch("https://battle-tetris-worker.nosuke-0460.workers.dev/rooms", {
+      method: "POST",
+    });
+
+    if (!res.ok) {
+      throw new Error("部屋作成に失敗しました");
+    }
+
+    const data = await res.json();
+    const newRoomId = data.roomId;
+
+    roomId = newRoomId;
+
+    setupWs(roomId, () => {
+      ws?.send({ type: "create_room", playerName });
+    });
+  } catch (err) {
+    console.error(err);
+    alert("部屋作成に失敗しました");
+    enableRoomButtons();
+  }
+};
+el("btn-join-room").onclick = () => {
+  if (roomJoined) return;
+
+  const rid = inp("input-room-id").value.trim().toUpperCase();
+  if (!rid) return alert("部屋IDを入力してください");
+
+  disableRoomButtons();
+  roomId = rid;
+
+  setupWs(roomId, () => {
     ws?.send({ type: "join_room", roomId: rid, playerName });
-  };
+  });
+};
   el("btn-ready").onclick = () => {
     ws?.send({ type: "ready" });
     el("btn-ready").textContent = "準備完了！";
@@ -212,10 +280,17 @@ function setupRoomButtons() {
   el("btn-copy-room").onclick = () => {
     navigator.clipboard.writeText(roomId).then(() => alert("コピーしました: " + roomId));
   };
-  el("btn-back-title").onclick = () => {
-    ws?.send({ type: "leave_room" });
-    screenMgr.show("title");
-  };
+el("btn-back-title").onclick = () => {
+  ws?.send({ type: "leave_room" });
+  if (ws) {
+    ws.disconnect();
+    ws = null;
+  }
+  roomJoined = false;
+  roomId = "";
+  enableRoomButtons();
+  screenMgr.show("title");
+};
 }
 
 // ============================================================
