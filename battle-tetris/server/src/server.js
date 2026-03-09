@@ -282,21 +282,46 @@ wss.on("connection", (ws, req) => {
       return;
     }
 
-    if (msg.type === "rematch") {
-      if (!room.rematchVotes.includes(playerId)) {
-        room.rematchVotes.push(playerId);
-      }
-      if (room.rematchVotes.length >= 2) {
-        room.status = "waiting";
-        room.rematchVotes = [];
-        for (const p of room.players) {
-          p.ready = false;
-          p.alive = true;
-        }
-        broadcast(room, { type: "countdown", seconds: 3 });
-      }
-      return;
+if (msg.type === "rematch") {
+  if (!room.rematchVotes.includes(playerId)) {
+    room.rematchVotes.push(playerId);
+  }
+
+  if (room.rematchVotes.length >= 2) {
+    room.status = "countdown";
+    room.rematchVotes = [];
+
+    for (const p of room.players) {
+      p.ready = false;
+      p.alive = true;
+      p.score = 0;
+      p.lines = 0;
+      p.combo = 0;
+      p.backToBack = false;
+      p.pendingGarbage = 0;
+      p.board = [];
     }
+
+    let sec = 3;
+    const tick = () => {
+      broadcast(room, { type: "countdown", seconds: sec });
+
+      if (sec === 0) {
+        room.seed = Math.floor(Math.random() * 0x7fffffff);
+        room.status = "playing";
+        broadcast(room, { type: "game_start", seed: room.seed });
+        return;
+      }
+
+      sec--;
+      setTimeout(tick, 1000);
+    };
+
+    tick();
+  }
+
+  return;
+}
 
     if (msg.type === "leave_room") {
       room.players = room.players.filter(p => p.id !== playerId);

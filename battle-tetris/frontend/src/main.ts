@@ -304,6 +304,10 @@ function startGame(seed: number) {
   clearLabel = "";
   countdownNum = 0;
 
+  const rematchBtn = el("btn-rematch") as HTMLButtonElement;
+  rematchBtn.textContent = "再戦";
+  rematchBtn.disabled = false;
+
   // Canvas セットアップ
   const canvas = el("game-canvas") as HTMLCanvasElement;
   const LEFT_PANEL_W = 150;
