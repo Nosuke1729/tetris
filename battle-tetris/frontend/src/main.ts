@@ -311,20 +311,20 @@ function startGame(seed: number) {
   // Canvas セットアップ
   const canvas = el("game-canvas") as HTMLCanvasElement;
   const LEFT_PANEL_W = 150;
-const RIGHT_PANEL_W = 150;
-const BOARD_PX = CELL_SIZE * BOARD_WIDTH;
-const OPPONENT_GAP = 10;
-const OPPONENT_W = MINI_CELL * BOARD_WIDTH + 60;
+  const RIGHT_PANEL_W = 150;
+  const BOARD_PX = CELL_SIZE * BOARD_WIDTH;
+  const OPPONENT_GAP = 10;
+  const OPPONENT_W = MINI_CELL * BOARD_WIDTH + 60;
 
-const canvasW =
-  gameMode === "battle"
-    ? LEFT_PANEL_W + BOARD_PX + RIGHT_PANEL_W + OPPONENT_GAP + OPPONENT_W
-    : LEFT_PANEL_W + BOARD_PX + RIGHT_PANEL_W;
+  const canvasW =
+    gameMode === "battle"
+      ? LEFT_PANEL_W + BOARD_PX + RIGHT_PANEL_W + OPPONENT_GAP + OPPONENT_W
+      : LEFT_PANEL_W + BOARD_PX + RIGHT_PANEL_W;
 
-const canvasH = CELL_SIZE * VISIBLE_HEIGHT;
+  const canvasH = CELL_SIZE * VISIBLE_HEIGHT;
 
-canvas.width = canvasW;
-canvas.height = canvasH;
+  canvas.width = canvasW;
+  canvas.height = canvasH;
   renderer = new Renderer(canvas, CELL_SIZE);
 
   // エンジン起動
@@ -640,28 +640,38 @@ function endGame(result: string) {
   screenMgr.show("result");
 
   const s = engine?.state;
+
   el("result-label").textContent =
     result === "win" ? "🏆 YOU WIN!" :
     result === "lose" ? "💀 YOU LOSE" :
     result === "draw" ? "🤝 DRAW" :
     "GAME OVER";
+
   el("result-label").style.color =
-    result === "win" ? "#ffd700" : result === "lose" ? "#ff4444" : "#aaa";
+    result === "win" ? "#ffd700" :
+    result === "lose" ? "#ff4444" :
+    "#aaa";
 
   el("result-score").textContent = `Score: ${s?.score ?? 0}`;
   el("result-lines").textContent = `Lines: ${s?.lines ?? 0}`;
   el("result-level").textContent = `Level: ${s?.level ?? 1}`;
 
-  el("btn-rematch").style.display = gameMode === "battle" ? "" : "none";
-  el("btn-rematch").onclick = () => {
+  const rematchBtn = el("btn-rematch") as HTMLButtonElement;
+  rematchBtn.style.display = gameMode === "battle" ? "" : "none";
+  rematchBtn.textContent = "再戦";
+  rematchBtn.disabled = false;
+
+  rematchBtn.onclick = () => {
     ws?.send({ type: "rematch" });
-    el("btn-rematch").textContent = "再戦申請中…";
-    (el("btn-rematch") as HTMLButtonElement).disabled = true;
+    rematchBtn.textContent = "再戦申請中…";
+    rematchBtn.disabled = true;
   };
+
   el("btn-back-title2").onclick = () => {
     ws?.send({ type: "leave_room" });
     screenMgr.show("title");
   };
+
   el("btn-play-again").onclick = () => startSingle();
   el("btn-play-again").style.display = gameMode === "single" ? "" : "none";
 }
