@@ -18,6 +18,7 @@ import { ClearResult } from "./game/scoring";
 const CELL_SIZE = 30;
 const MINI_CELL = 14;
 const NEXT_CELL = 24;
+const API_BASE = "https://battle-tetris-server.onrender.com";
 
 // ============================================================
 // DOM 参照
@@ -234,9 +235,9 @@ function setupRoomButtons() {
   try {
     disableRoomButtons();
 
-    const res = await fetch("https://battle-tetris-worker.nosuke-0460.workers.dev/rooms", {
-      method: "POST",
-    });
+const res = await fetch(`${API_BASE}/rooms`, {
+  method: "POST",
+});
 
     if (!res.ok) {
       throw new Error("部屋作成に失敗しました");
