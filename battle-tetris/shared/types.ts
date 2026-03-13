@@ -14,6 +14,11 @@ export interface ActivePiece {
   lastRotateSuccess: boolean;
 }
 
+export type QueuedGarbage = {
+  amount: number;
+  turnsLeft: number;
+};
+
 export interface GameState {
   board: number[][];
   activePiece: ActivePiece | null;
@@ -26,6 +31,8 @@ export interface GameState {
   combo: number;
   backToBack: boolean;
   pendingGarbage: number;
+  pendingGarbageQueue: QueuedGarbage[];
+  singleLineBank: number;
   usedHold: boolean;
   isGameOver: boolean;
   isPaused: boolean;
@@ -84,23 +91,50 @@ export interface MsgRematch { type: "rematch"; }
 export interface MsgLeaveRoom { type: "leave_room"; }
 
 export type ClientMessage =
-  | MsgCreateRoom | MsgJoinRoom | MsgReady | MsgStartGame
-  | MsgPieceLock | MsgBoardSnapshot | MsgGameOver | MsgRematch | MsgLeaveRoom;
+  | MsgCreateRoom
+  | MsgJoinRoom
+  | MsgReady
+  | MsgStartGame
+  | MsgPieceLock
+  | MsgBoardSnapshot
+  | MsgGameOver
+  | MsgRematch
+  | MsgLeaveRoom;
 
 // Server -> Client
 export interface MsgRoomCreated { type: "room_created"; roomId: string; }
-export interface MsgRoomJoined { type: "room_joined"; roomId: string; players: { id: string; name: string }[]; isHost: boolean; }
+export interface MsgRoomJoined {
+  type: "room_joined";
+  roomId: string;
+  players: { id: string; name: string }[];
+  isHost: boolean;
+}
 export interface MsgPlayerJoined { type: "player_joined"; player: { id: string; name: string }; }
 export interface MsgPlayerLeft { type: "player_left"; playerId: string; }
 export interface MsgCountdown { type: "countdown"; seconds: number; }
 export interface MsgGameStart { type: "game_start"; seed: number; }
 export interface MsgGarbageReceived { type: "garbage_received"; amount: number; }
-export interface MsgOpponentUpdate { type: "opponent_update"; board: number[][]; score: number; combo: number; b2b: boolean; danger: boolean; }
+export interface MsgOpponentUpdate {
+  type: "opponent_update";
+  board: number[][];
+  score: number;
+  combo: number;
+  b2b: boolean;
+  danger: boolean;
+}
 export interface MsgMatchResult { type: "match_result"; result: "win" | "lose" | "draw"; }
 export interface MsgError { type: "error"; message: string; }
 export interface MsgPlayerReady { type: "player_ready"; playerId: string; }
 
 export type ServerMessage =
-  | MsgRoomCreated | MsgRoomJoined | MsgPlayerJoined | MsgPlayerLeft
-  | MsgCountdown | MsgGameStart | MsgGarbageReceived | MsgOpponentUpdate
-  | MsgMatchResult | MsgError | MsgPlayerReady;
+  | MsgRoomCreated
+  | MsgRoomJoined
+  | MsgPlayerJoined
+  | MsgPlayerLeft
+  | MsgCountdown
+  | MsgGameStart
+  | MsgGarbageReceived
+  | MsgOpponentUpdate
+  | MsgMatchResult
+  | MsgError
+  | MsgPlayerReady;
