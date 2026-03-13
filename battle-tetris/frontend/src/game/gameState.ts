@@ -2,19 +2,35 @@
 // game/gameState.ts  –  ゲーム状態管理・メインループロジック
 // ============================================================
 
-import { GameState, ActivePiece, PieceType, Rotation } from "../../../shared/types";
-import { BOARD_WIDTH, BOARD_HEIGHT, LOCK_DELAY_MS, FALL_INTERVALS } from "../../../shared/constants";
+import { GameState, ActivePiece } from "../../../shared/types";
 import {
-  createEmptyBoard, cloneBoard, isColliding, placePiece,
-  getFilledRows, clearLines, getGhostY, addGarbageLines, canSpawn, Board
+  BOARD_WIDTH,
+  LOCK_DELAY_MS,
+  FALL_INTERVALS,
+} from "../../../shared/constants";
+import {
+  createEmptyBoard,
+  isColliding,
+  placePiece,
+  getFilledRows,
+  clearLines,
+  getGhostY,
+  canSpawn,
 } from "./board";
-import { BagManager } from "./bag";
+import { BagManager, createRng } from "./bag";
 import { tryRotate, RotateDirection } from "./rotation";
 import { isTSpin } from "./tspin";
 import { calcClearResult, ClearResult } from "./scoring";
-import { cancelGarbage } from "./garbage";
+import {
+  enqueueGarbage,
+  cancelGarbage,
+  decayGarbageQueue,
+  popLandingGarbage,
+  applyGarbageLines,
+  hasAllClear,
+  sumGarbageQueue,
+} from "./garbage";
 import { getSpawnPosition } from "./piece";
-import { createRng } from "./bag";
 
 export interface LockEventData {
   board: number[][];
@@ -46,7 +62,6 @@ export class GameEngine {
   constructor(seed: number, callbacks: GameEventCallback) {
     this.callbacks = callbacks;
     this.bagManager = new BagManager(seed);
-    // ゴミ穴用乱数（seedから派生）
     this.garbageRng = createRng(seed ^ 0xdeadbeef);
 
     this.state = {
@@ -60,20 +75,24 @@ export class GameEngine {
       level: 1,
       combo: 0,
       backToBack: false,
-      pendingGarbage: 0,
+      pendingGarbage: 0,      // UI表示用合計
+      pendingGarbageQueue: [],// 実際の遅延お邪魔
+      singleLineBank: 0,      // SINGLE蓄積
       usedHold: false,
       isGameOver: false,
       isPaused: false,
     };
 
-    // next を5つ補充
     this.state.nextQueue = this.bagManager.peek(5);
     this.spawnNext();
   }
 
+  private refreshPendingGarbagePreview() {
+    this.state.pendingGarbage = sumGarbageQueue(this.state.pendingGarbageQueue);
+  }
+
   private spawnNext() {
     const type = this.bagManager.next();
-    // nextQueue 更新
     this.state.nextQueue = this.bagManager.peek(5);
 
     const { x, y } = getSpawnPosition(type);
@@ -91,6 +110,7 @@ export class GameEngine {
       this.callbacks.onGameOver();
       return;
     }
+
     this.state.activePiece = piece;
     this.state.usedHold = false;
     this.cancelLockTimer();
@@ -152,23 +172,30 @@ export class GameEngine {
   hold() {
     if (!this.canAct()) return;
     if (this.state.usedHold) return;
+
     const p = this.state.activePiece!;
     const prev = this.state.holdPiece;
     this.state.holdPiece = p.type;
     this.state.usedHold = true;
+
     if (prev) {
       const { x, y } = getSpawnPosition(prev);
       this.state.activePiece = {
-        type: prev, x, y, rotation: 0,
-        lastAction: "spawn", lastRotateSuccess: false,
+        type: prev,
+        x,
+        y,
+        rotation: 0,
+        lastAction: "spawn",
+        lastRotateSuccess: false,
       };
     } else {
       this.spawnNext();
     }
+
     this.cancelLockTimer();
   }
 
-  // ---- ゲームティック (requestAnimationFrame から呼ぶ) ----
+  // ---- ゲームティック ----
 
   tick(now: number) {
     if (this.state.isGameOver || this.state.isPaused) return;
@@ -176,7 +203,7 @@ export class GameEngine {
 
     const interval = this.softDropping
       ? 50
-      : (FALL_INTERVALS[Math.min(this.state.level - 1, FALL_INTERVALS.length - 1)]);
+      : FALL_INTERVALS[Math.min(this.state.level - 1, FALL_INTERVALS.length - 1)];
 
     if (now - this.lastFallTime >= interval) {
       this.fallDown();
@@ -190,9 +217,8 @@ export class GameEngine {
       p.y++;
       if (this.softDropping) this.state.score += 1;
       p.lastAction = this.softDropping ? "softDrop" : "move";
-      this.cancelLockTimer(); // 着地していないのでリセット
+      this.cancelLockTimer();
     } else {
-      // 着地
       if (this.lockTimer === null) {
         this.lockTimer = window.setTimeout(() => this.lock(), LOCK_DELAY_MS);
       }
@@ -213,67 +239,108 @@ export class GameEngine {
     }
   }
 
+  private resolveIncomingGarbageAfterLock(attack: number): {
+    sentToOpponent: number;
+    canceledAmount: number;
+  } {
+    // 先に相殺
+    const canceled = cancelGarbage(attack, this.state.pendingGarbageQueue);
+    this.state.pendingGarbageQueue = canceled.queue;
+
+    // 自分が1ターン終えたので、全キューを1進める
+    this.state.pendingGarbageQueue = decayGarbageQueue(this.state.pendingGarbageQueue);
+
+    // 着弾する分だけ落とす
+    const landing = popLandingGarbage(this.state.pendingGarbageQueue);
+    this.state.pendingGarbageQueue = landing.queue;
+
+    if (landing.landingAmount > 0) {
+      // ここで着弾。ロック後なのでアクティブミノに埋まらない
+      this.state.board = applyGarbageLines(
+        this.state.board,
+        landing.landingAmount,
+        this.garbageRng
+      );
+    }
+
+    this.refreshPendingGarbagePreview();
+
+    return {
+      sentToOpponent: canceled.sentToOpponent,
+      canceledAmount: canceled.canceledAmount,
+    };
+  }
+
   private lock() {
     this.cancelLockTimer();
     const p = this.state.activePiece!;
-
-    // T-Spin チェック
     const spinDetected = isTSpin(this.state.board, p);
 
-    // ゴミライン着弾
-    let pendingConsumed = 0;
-    if (this.state.pendingGarbage > 0) {
-      this.state.board = addGarbageLines(
-        this.state.board, this.state.pendingGarbage, this.garbageRng
-      );
-      pendingConsumed = this.state.pendingGarbage;
-      this.state.pendingGarbage = 0;
-    }
-
-    // ミノを固定
+    // 1. まず固定
     this.state.board = placePiece(this.state.board, p.type, p.x, p.y, p.rotation);
 
-    // ライン消去
+    // 2. ライン消去
     const filled = getFilledRows(this.state.board);
     const linesCleared = filled.length;
     if (linesCleared > 0) {
       this.state.board = clearLines(this.state.board, filled);
     }
 
-    // スコア・攻撃計算
-    const clearResult = linesCleared > 0 || spinDetected
-      ? calcClearResult(linesCleared, spinDetected, this.state.combo, this.state.backToBack)
-      : null;
+    // 3. 全消し判定（消した後）
+    const allClear = linesCleared > 0 && hasAllClear(this.state.board);
+
+    // 4. combo 更新
+    if (linesCleared > 0) {
+      this.state.combo += 1;
+    } else {
+      this.state.combo = 0;
+    }
+
+    // 5. スコア・攻撃計算
+    const clearResult = calcClearResult(
+      linesCleared,
+      spinDetected,
+      this.state.combo,
+      this.state.backToBack,
+      this.state.singleLineBank,
+      allClear
+    );
 
     let attack = 0;
+    let pendingGarbageConsumed = 0;
+
     if (clearResult) {
       this.state.score += clearResult.scoreDelta;
       this.state.lines += linesCleared;
       this.state.combo = clearResult.newCombo;
       this.state.backToBack = clearResult.newB2B;
+      this.state.singleLineBank = clearResult.nextSingleLineBank;
       this.state.level = Math.floor(this.state.lines / 10) + 1;
-      attack = clearResult.attack;
 
-      // ゴミ相殺
-      const { newPending, sentToOpponent } = cancelGarbage(attack, 0);
-      attack = sentToOpponent;
+      const resolved = this.resolveIncomingGarbageAfterLock(clearResult.attack);
+      attack = resolved.sentToOpponent;
+      pendingGarbageConsumed = resolved.canceledAmount;
 
       this.callbacks.onClear(clearResult);
     } else {
-      this.state.combo = 0;
+      // 消去がないターンでも、お邪魔ターンは進む
+      const resolved = this.resolveIncomingGarbageAfterLock(0);
+      attack = resolved.sentToOpponent;
+      pendingGarbageConsumed = resolved.canceledAmount;
     }
 
     const lockData: LockEventData = {
-      board: this.state.board.map(r => [...r]),
+      board: this.state.board.map((r) => [...r]),
       linesCleared,
       isTSpin: spinDetected,
-      isB2B: clearResult?.label?.startsWith("B2B") ?? false,
+      isB2B: this.state.backToBack,
       combo: this.state.combo,
       attack,
       scoreDelta: clearResult?.scoreDelta ?? 0,
-      pendingGarbageConsumed: pendingConsumed,
+      pendingGarbageConsumed,
       clearResult,
     };
+
     this.callbacks.onLock(lockData);
 
     this.state.activePiece = null;
@@ -281,7 +348,12 @@ export class GameEngine {
   }
 
   addPendingGarbage(amount: number) {
-    this.state.pendingGarbage += amount;
+    this.state.pendingGarbageQueue = enqueueGarbage(
+      this.state.pendingGarbageQueue,
+      amount,
+      3
+    );
+    this.refreshPendingGarbagePreview();
   }
 
   getGhostY(): number {
@@ -290,8 +362,14 @@ export class GameEngine {
     return getGhostY(this.state.board, p.type, p.x, p.y, p.rotation);
   }
 
-  pause() { this.state.isPaused = true; }
-  resume() { this.state.isPaused = false; this.lastFallTime = performance.now(); }
+  pause() {
+    this.state.isPaused = true;
+  }
+
+  resume() {
+    this.state.isPaused = false;
+    this.lastFallTime = performance.now();
+  }
 
   private canAct(): boolean {
     return !this.state.isGameOver && !this.state.isPaused && this.state.activePiece !== null;

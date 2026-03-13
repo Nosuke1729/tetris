@@ -1,81 +1,129 @@
 // ============================================================
-// game/scoring.ts  –  スコア・攻撃量計算
+// game/scoring.ts
 // ============================================================
-import { FALL_INTERVALS } from "@shared/constants";
 
-import {
-  SCORE_TABLE, ATTACK_TABLE, COMBO_BONUS_SCORE,
-  B2B_SCORE_MULT, B2B_ATTACK_BONUS
-} from "../../../shared/constants";
+import { FALL_INTERVALS } from "../../../shared/constants";
 
 export interface ClearResult {
+  label: string;
   scoreDelta: number;
   attack: number;
   newCombo: number;
   newB2B: boolean;
-  isTSpin: boolean;
-  label: string;
+  nextSingleLineBank: number;
+  isAllClear: boolean;
+}
+
+export function getFallInterval(level: number): number {
+  const idx = Math.max(0, Math.min(FALL_INTERVALS.length - 1, level - 1));
+  return FALL_INTERVALS[idx];
 }
 
 export function calcClearResult(
   linesCleared: number,
-  isTSpin: boolean,
-  prevCombo: number,
-  prevB2B: boolean
-): ClearResult {
-  let baseScore = 0;
-  let baseAttack = 0;
-  let label = "";
-  let isB2BEligible = false;
+  isTSpinClear: boolean,
+  combo: number,
+  backToBack: boolean,
+  singleLineBank = 0,
+  isAllClear = false
+): ClearResult | null {
+  // 完全に何も起きなかった場合
+  if (linesCleared === 0 && !isTSpinClear && !isAllClear) {
+    return null;
+  }
 
-  if (isTSpin) {
-    switch (linesCleared) {
-      case 0: baseScore = SCORE_TABLE.tspin0;    baseAttack = ATTACK_TABLE.tspin0;    label = "T-Spin"; break;
-      case 1: baseScore = SCORE_TABLE.tspinSingle; baseAttack = ATTACK_TABLE.tspinSingle; label = "T-Spin Single"; isB2BEligible = true; break;
-      case 2: baseScore = SCORE_TABLE.tspinDouble; baseAttack = ATTACK_TABLE.tspinDouble; label = "T-Spin Double"; isB2BEligible = true; break;
-      case 3: baseScore = SCORE_TABLE.tspinTriple; baseAttack = ATTACK_TABLE.tspinTriple; label = "T-Spin Triple"; isB2BEligible = true; break;
+  let scoreDelta = 0;
+  let attack = 0;
+  let label = "";
+  let newB2B = false;
+  let nextSingleLineBank = singleLineBank;
+
+  // ---- T-Spin 系 ----
+  if (isTSpinClear) {
+    if (linesCleared === 0) {
+      scoreDelta += 400;
+      label = "T-SPIN";
+      newB2B = backToBack;
+    } else if (linesCleared === 1) {
+      scoreDelta += 800;
+      attack += 2;
+      label = "T-SPIN SINGLE";
+      newB2B = true;
+    } else if (linesCleared === 2) {
+      scoreDelta += 1200;
+      attack += 4;
+      label = "T-SPIN DOUBLE";
+      newB2B = true;
+    } else if (linesCleared === 3) {
+      scoreDelta += 1600;
+      attack += 6;
+      label = "T-SPIN TRIPLE";
+      newB2B = true;
     }
   } else {
-    switch (linesCleared) {
-      case 1: baseScore = SCORE_TABLE.single; baseAttack = ATTACK_TABLE.single; label = "Single"; break;
-      case 2: baseScore = SCORE_TABLE.double; baseAttack = ATTACK_TABLE.double; label = "Double"; break;
-      case 3: baseScore = SCORE_TABLE.triple; baseAttack = ATTACK_TABLE.triple; label = "Triple"; break;
-      case 4: baseScore = SCORE_TABLE.tetris; baseAttack = ATTACK_TABLE.tetris; label = "Tetris!"; isB2BEligible = true; break;
+    // ---- 通常消し ----
+    if (linesCleared === 1) {
+      scoreDelta += 100;
+      label = "SINGLE";
+
+      // 1行消しは蓄積して 2回で1攻撃
+      nextSingleLineBank += 1;
+      if (nextSingleLineBank >= 2) {
+        attack += Math.floor(nextSingleLineBank / 2);
+        nextSingleLineBank %= 2;
+      }
+
+      newB2B = false;
+    } else if (linesCleared === 2) {
+      scoreDelta += 300;
+      attack += 1;
+      label = "DOUBLE";
+      newB2B = false;
+    } else if (linesCleared === 3) {
+      scoreDelta += 500;
+      attack += 2;
+      label = "TRIPLE";
+      newB2B = false;
+    } else if (linesCleared === 4) {
+      scoreDelta += 800;
+      attack += 4;
+      label = "TETRIS";
+      newB2B = true;
     }
   }
 
-  // B2B ボーナス
-  const isB2B = isB2BEligible && prevB2B;
-  if (isB2B && linesCleared > 0) {
-    baseScore = Math.floor(baseScore * B2B_SCORE_MULT);
-    baseAttack += B2B_ATTACK_BONUS;
-    label = "B2B " + label;
+  // ---- B2B bonus ----
+  if ((isTSpinClear && linesCleared > 0) || linesCleared === 4) {
+    if (backToBack) {
+      attack += 1;
+      scoreDelta = Math.floor(scoreDelta * 1.5);
+      label = `B2B ${label}`;
+    }
   }
 
-  // Combo ボーナス
-  const newCombo = linesCleared > 0 ? prevCombo + 1 : 0;
-  const comboBonus = newCombo > 0 ? newCombo * COMBO_BONUS_SCORE : 0;
-  const comboAttack = calcComboAttack(newCombo);
+  // ---- REN / combo ----
+  // combo は「今回すでに更新済み」の値を受け取る想定
+  if (linesCleared > 0 && combo >= 2) {
+    if (combo <= 3) attack += 1;
+    else if (combo <= 5) attack += 2;
+    else if (combo <= 7) attack += 3;
+    else attack += 4;
+  }
+
+  // ---- All Clear ----
+  if (isAllClear) {
+    attack += 6;
+    scoreDelta += 1000;
+    label = label ? `${label} / ALL CLEAR!` : "ALL CLEAR!";
+  }
 
   return {
-    scoreDelta: baseScore + comboBonus,
-    attack: baseAttack + comboAttack,
-    newCombo,
-    newB2B: isB2BEligible ? true : (linesCleared === 0 ? prevB2B : false),
-    isTSpin,
     label,
+    scoreDelta,
+    attack,
+    newCombo: linesCleared > 0 ? combo : 0,
+    newB2B,
+    nextSingleLineBank,
+    isAllClear,
   };
-}
-
-function calcComboAttack(combo: number): number {
-  if (combo <= 2) return 0;
-  if (combo <= 4) return 1;
-  if (combo <= 6) return 2;
-  return 3;
-}
-
-// レベルからの落下間隔計算
-export function getFallInterval(level: number): number {
-  const idx = Math.min(level - 1, FALL_INTERVALS.length - 1);
-  return FALL_INTERVALS[idx];
 }
