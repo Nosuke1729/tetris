@@ -1,10 +1,12 @@
 // ============================================================
 // game/gameState.ts  –  ゲーム状態管理・メインループロジック
+// Practice 対応版
 // ============================================================
 
-import { GameState, ActivePiece } from "../../../shared/types";
+import { GameState, ActivePiece, PieceType, Rotation, QueuedGarbage } from "../../../shared/types";
 import {
   BOARD_WIDTH,
+  BOARD_HEIGHT,
   LOCK_DELAY_MS,
   FALL_INTERVALS,
 } from "../../../shared/constants";
@@ -44,11 +46,105 @@ export interface LockEventData {
   clearResult: ClearResult | null;
 }
 
+export type PracticeObjectiveType =
+  | "none"
+  | "match_target"
+  | "clear_all"
+  | "line_clear"
+  | "tspin_single"
+  | "tspin_double"
+  | "tspin_triple";
+
+export type PracticeObjective = {
+  type: PracticeObjectiveType;
+  lineCount?: number;
+};
+
+export type PracticePieceState = {
+  type: PieceType;
+  x: number;
+  y: number;
+  rotation: Rotation;
+};
+
+export type PracticeLoadConfig = {
+  board?: number[][];
+  activePiece?: PracticePieceState | null;
+  holdPiece?: PieceType | null;
+  nextQueue?: PieceType[];
+  usedHold?: boolean;
+  level?: number;
+  score?: number;
+  lines?: number;
+  combo?: number;
+  backToBack?: boolean;
+  singleLineBank?: number;
+  pendingGarbageQueue?: QueuedGarbage[];
+  targetMask?: boolean[][];
+  objective?: PracticeObjective;
+  practiceName?: string;
+};
+
+export type PracticeSuccessInfo = {
+  objective: PracticeObjective;
+  practiceName?: string;
+};
+
 export type GameEventCallback = {
   onLock: (data: LockEventData) => void;
   onGameOver: () => void;
   onClear: (result: ClearResult) => void;
+  onPracticeSuccess?: (info: PracticeSuccessInfo) => void;
 };
+
+function cloneBoard(board: number[][]): number[][] {
+  return board.map((row) => [...row]);
+}
+
+function cloneTargetMask(mask: boolean[][] | null): boolean[][] | null {
+  if (!mask) return null;
+  return mask.map((row) => [...row]);
+}
+
+function createEmptyTargetMask(): boolean[][] {
+  return Array.from({ length: BOARD_HEIGHT }, () =>
+    Array.from({ length: BOARD_WIDTH }, () => false)
+  );
+}
+
+function normalizeBoardShape(board: number[][]): number[][] {
+  const out = createEmptyBoard();
+
+  for (let y = 0; y < Math.min(board.length, BOARD_HEIGHT); y++) {
+    for (let x = 0; x < Math.min(board[y].length, BOARD_WIDTH); x++) {
+      out[y][x] = board[y][x] ?? 0;
+    }
+  }
+
+  return out;
+}
+
+function normalizeTargetMask(mask?: boolean[][] | null): boolean[][] | null {
+  if (!mask) return null;
+
+  const out = createEmptyTargetMask();
+  for (let y = 0; y < Math.min(mask.length, BOARD_HEIGHT); y++) {
+    for (let x = 0; x < Math.min(mask[y].length, BOARD_WIDTH); x++) {
+      out[y][x] = !!mask[y][x];
+    }
+  }
+  return out;
+}
+
+function boardMatchesTarget(board: number[][], target: boolean[][]): boolean {
+  for (let y = 0; y < BOARD_HEIGHT; y++) {
+    for (let x = 0; x < BOARD_WIDTH; x++) {
+      const occupied = board[y][x] !== 0;
+      if (occupied !== target[y][x]) return false;
+    }
+  }
+  return true;
+}
 
 export class GameEngine {
   state: GameState;
@@ -58,6 +154,14 @@ export class GameEngine {
   private lastFallTime = 0;
   private softDropping = false;
   private callbacks: GameEventCallback;
+
+  private practiceMode = false;
+  private practiceObjective: PracticeObjective = { type: "none" };
+  private practiceTargetMask: boolean[][] | null = null;
+  private practiceName = "";
+  private practiceCleared = false;
+
+  private forcedQueue: PieceType[] = [];
 
   constructor(seed: number, callbacks: GameEventCallback) {
     this.callbacks = callbacks;
@@ -75,26 +179,137 @@ export class GameEngine {
       level: 1,
       combo: 0,
       backToBack: false,
-      pendingGarbage: 0,      // UI表示用合計
-      pendingGarbageQueue: [],// 実際の遅延お邪魔
-      singleLineBank: 0,      // SINGLE蓄積
+      pendingGarbage: 0,
+      pendingGarbageQueue: [],
+      singleLineBank: 0,
       usedHold: false,
       isGameOver: false,
       isPaused: false,
     };
 
-    this.state.nextQueue = this.bagManager.peek(5);
+    this.updateNextQueuePreview();
     this.spawnNext();
+  }
+
+  getPracticeTargetMask(): boolean[][] | null {
+    return cloneTargetMask(this.practiceTargetMask);
+  }
+
+  getPracticeObjective(): PracticeObjective {
+    return { ...this.practiceObjective };
+  }
+
+  isPracticeMode(): boolean {
+    return this.practiceMode;
+  }
+
+  isPracticeCleared(): boolean {
+    return this.practiceCleared;
+  }
+
+  getPracticeName(): string {
+    return this.practiceName;
+  }
+
+  loadPracticeState(config: PracticeLoadConfig) {
+    this.practiceMode = true;
+    this.practiceCleared = false;
+    this.practiceObjective = config.objective ?? { type: "none" };
+    this.practiceTargetMask = normalizeTargetMask(config.targetMask);
+    this.practiceName = config.practiceName ?? "";
+
+    this.cancelLockTimer();
+    this.softDropping = false;
+    this.lastFallTime = performance.now();
+
+    this.state.board = normalizeBoardShape(config.board ?? createEmptyBoard());
+    this.state.holdPiece = config.holdPiece ?? null;
+    this.state.usedHold = config.usedHold ?? false;
+    this.state.score = config.score ?? 0;
+    this.state.lines = config.lines ?? 0;
+    this.state.level = config.level ?? 1;
+    this.state.combo = config.combo ?? 0;
+    this.state.backToBack = config.backToBack ?? false;
+    this.state.singleLineBank = config.singleLineBank ?? 0;
+    this.state.pendingGarbageQueue = [...(config.pendingGarbageQueue ?? [])];
+    this.state.pendingGarbage = sumGarbageQueue(this.state.pendingGarbageQueue);
+    this.state.isGameOver = false;
+    this.state.isPaused = false;
+
+    this.forcedQueue = [...(config.nextQueue ?? [])];
+    this.updateNextQueuePreview();
+
+    if (config.activePiece) {
+      this.state.activePiece = {
+        type: config.activePiece.type,
+        x: config.activePiece.x,
+        y: config.activePiece.y,
+        rotation: config.activePiece.rotation,
+        lastAction: "spawn",
+        lastRotateSuccess: false,
+      };
+
+      if (
+        isColliding(
+          this.state.board,
+          this.state.activePiece.type,
+          this.state.activePiece.x,
+          this.state.activePiece.y,
+          this.state.activePiece.rotation
+        )
+      ) {
+        this.state.isGameOver = true;
+        this.callbacks.onGameOver();
+        return;
+      }
+    } else {
+      this.spawnNext();
+    }
+
+    if (this.checkPracticeSuccess(0, false)) {
+      this.practiceCleared = true;
+    }
+  }
+
+  clearPracticeMode() {
+    this.practiceMode = false;
+    this.practiceObjective = { type: "none" };
+    this.practiceTargetMask = null;
+    this.practiceName = "";
+    this.practiceCleared = false;
+    this.forcedQueue = [];
   }
 
   private refreshPendingGarbagePreview() {
     this.state.pendingGarbage = sumGarbageQueue(this.state.pendingGarbageQueue);
   }
 
-  private spawnNext() {
-    const type = this.bagManager.next();
-    this.state.nextQueue = this.bagManager.peek(5);
+  private updateNextQueuePreview() {
+    const previewNeeded = 5;
+    const forcedPreview = this.forcedQueue.slice(0, previewNeeded);
 
+    if (forcedPreview.length >= previewNeeded) {
+      this.state.nextQueue = forcedPreview;
+      return;
+    }
+
+    const rest = this.bagManager.peek(previewNeeded - forcedPreview.length);
+    this.state.nextQueue = [...forcedPreview, ...rest];
+  }
+
+  private getNextPieceType(): PieceType {
+    if (this.forcedQueue.length > 0) {
+      const next = this.forcedQueue.shift()!;
+      this.updateNextQueuePreview();
+      return next;
+    }
+
+    const next = this.bagManager.next();
+    this.updateNextQueuePreview();
+    return next;
+  }
+
+  private spawnSpecific(type: PieceType) {
     const { x, y } = getSpawnPosition(type);
     const piece: ActivePiece = {
       type,
@@ -116,7 +331,10 @@ export class GameEngine {
     this.cancelLockTimer();
   }
 
-  // ---- 入力処理 ----
+  private spawnNext() {
+    const type = this.getNextPieceType();
+    this.spawnSpecific(type);
+  }
 
   moveLeft() {
     if (!this.canAct()) return;
@@ -180,7 +398,7 @@ export class GameEngine {
 
     if (prev) {
       const { x, y } = getSpawnPosition(prev);
-      this.state.activePiece = {
+      const nextPiece: ActivePiece = {
         type: prev,
         x,
         y,
@@ -188,14 +406,27 @@ export class GameEngine {
         lastAction: "spawn",
         lastRotateSuccess: false,
       };
+
+      if (
+        isColliding(
+          this.state.board,
+          nextPiece.type,
+          nextPiece.x,
+          nextPiece.y,
+          nextPiece.rotation
+        )
+      ) {
+        this.state.isGameOver = true;
+        this.callbacks.onGameOver();
+        return;
+      }
+
+      this.state.activePiece = nextPiece;
+      this.cancelLockTimer();
     } else {
       this.spawnNext();
     }
-
-    this.cancelLockTimer();
   }
-
-  // ---- ゲームティック ----
 
   tick(now: number) {
     if (this.state.isGameOver || this.state.isPaused) return;
@@ -243,19 +474,15 @@ export class GameEngine {
     sentToOpponent: number;
     canceledAmount: number;
   } {
-    // 先に相殺
     const canceled = cancelGarbage(attack, this.state.pendingGarbageQueue);
     this.state.pendingGarbageQueue = canceled.queue;
 
-    // 自分が1ターン終えたので、全キューを1進める
     this.state.pendingGarbageQueue = decayGarbageQueue(this.state.pendingGarbageQueue);
 
-    // 着弾する分だけ落とす
     const landing = popLandingGarbage(this.state.pendingGarbageQueue);
     this.state.pendingGarbageQueue = landing.queue;
 
     if (landing.landingAmount > 0) {
-      // ここで着弾。ロック後なのでアクティブミノに埋まらない
       this.state.board = applyGarbageLines(
         this.state.board,
         landing.landingAmount,
@@ -271,32 +498,73 @@ export class GameEngine {
     };
   }
 
+  private checkPracticeSuccess(linesCleared: number, spinDetected: boolean): boolean {
+    if (!this.practiceMode || this.practiceCleared) return false;
+
+    const objective = this.practiceObjective;
+
+    switch (objective.type) {
+      case "none":
+        return false;
+
+      case "match_target":
+        if (!this.practiceTargetMask) return false;
+        return boardMatchesTarget(this.state.board, this.practiceTargetMask);
+
+      case "clear_all":
+        return hasAllClear(this.state.board);
+
+      case "line_clear":
+        return linesCleared >= (objective.lineCount ?? 1);
+
+      case "tspin_single":
+        return !!spinDetected && linesCleared === 1;
+
+      case "tspin_double":
+        return !!spinDetected && linesCleared === 2;
+
+      case "tspin_triple":
+        return !!spinDetected && linesCleared === 3;
+
+      default:
+        return false;
+    }
+  }
+
+  private triggerPracticeSuccess() {
+    if (!this.practiceMode || this.practiceCleared) return;
+
+    this.practiceCleared = true;
+
+    if (this.callbacks.onPracticeSuccess) {
+      this.callbacks.onPracticeSuccess({
+        objective: { ...this.practiceObjective },
+        practiceName: this.practiceName,
+      });
+    }
+  }
+
   private lock() {
     this.cancelLockTimer();
     const p = this.state.activePiece!;
     const spinDetected = isTSpin(this.state.board, p);
 
-    // 1. まず固定
     this.state.board = placePiece(this.state.board, p.type, p.x, p.y, p.rotation);
 
-    // 2. ライン消去
     const filled = getFilledRows(this.state.board);
     const linesCleared = filled.length;
     if (linesCleared > 0) {
       this.state.board = clearLines(this.state.board, filled);
     }
 
-    // 3. 全消し判定（消した後）
     const allClear = linesCleared > 0 && hasAllClear(this.state.board);
 
-    // 4. combo 更新
     if (linesCleared > 0) {
       this.state.combo += 1;
     } else {
       this.state.combo = 0;
     }
 
-    // 5. スコア・攻撃計算
     const clearResult = calcClearResult(
       linesCleared,
       spinDetected,
@@ -323,14 +591,13 @@ export class GameEngine {
 
       this.callbacks.onClear(clearResult);
     } else {
-      // 消去がないターンでも、お邪魔ターンは進む
       const resolved = this.resolveIncomingGarbageAfterLock(0);
       attack = resolved.sentToOpponent;
       pendingGarbageConsumed = resolved.canceledAmount;
     }
 
     const lockData: LockEventData = {
-      board: this.state.board.map((r) => [...r]),
+      board: cloneBoard(this.state.board),
       linesCleared,
       isTSpin: spinDetected,
       isB2B: this.state.backToBack,
@@ -342,6 +609,10 @@ export class GameEngine {
     };
 
     this.callbacks.onLock(lockData);
+
+    if (this.checkPracticeSuccess(linesCleared, spinDetected)) {
+      this.triggerPracticeSuccess();
+    }
 
     this.state.activePiece = null;
     this.spawnNext();
@@ -372,6 +643,10 @@ export class GameEngine {
   }
 
   private canAct(): boolean {
-    return !this.state.isGameOver && !this.state.isPaused && this.state.activePiece !== null;
+    return (
+      !this.state.isGameOver &&
+      !this.state.isPaused &&
+      this.state.activePiece !== null
+    );
   }
 }

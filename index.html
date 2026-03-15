@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Battle Tetris Web</title>
-  <script type="module" crossorigin src="/tetris/assets/index-7sldseis.js"></script>
-  <link rel="stylesheet" crossorigin href="/tetris/assets/index-BOLf3f7r.css">
+  <script type="module" crossorigin src="/tetris/assets/index-DkdFoO5z.js"></script>
+  <link rel="stylesheet" crossorigin href="/tetris/assets/index-E8wGOkOw.css">
 </head>
 <body>
 
@@ -46,6 +46,73 @@
 </div>
 
 <!-- ============================================================
+     シングルプレイ モード選択
+============================================================ -->
+<div id="screen-mode" class="screen" style="display:none">
+  <div class="title-wrapper">
+    <h2 class="mode-title">SINGLE PLAY</h2>
+
+    <div class="btn-group">
+      <button id="btn-normal" class="btn btn-primary">ノーマルプレイ</button>
+      <button id="btn-practice" class="btn btn-secondary">プラクティス</button>
+    </div>
+
+    <button id="btn-back-title-mode" class="btn btn-outline">← 戻る</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     プラクティスメニュー
+============================================================ -->
+<div id="screen-practice" class="screen" style="display:none">
+  <div class="practice-wrapper">
+    <h2>プラクティス</h2>
+
+    <div class="practice-categories">
+      <section class="practice-section">
+        <h3>Openers</h3>
+        <div class="btn-group practice-grid">
+          <button class="btn btn-primary practice-item" data-practice="dt_cannon">DT砲</button>
+          <button class="btn btn-primary practice-item" data-practice="hachimitsu">ハチミツ砲</button>
+          <button class="btn btn-primary practice-item" data-practice="tki">TKI</button>
+          <button class="btn btn-primary practice-item" data-practice="pc1">Perfect Clear</button>
+        </div>
+      </section>
+
+      <section class="practice-section">
+        <h3>T-Spin</h3>
+        <div class="btn-group practice-grid">
+          <button class="btn btn-secondary practice-item" data-practice="tsd">T-Spin Double</button>
+          <button class="btn btn-secondary practice-item" data-practice="tst">T-Spin Triple</button>
+          <button class="btn btn-secondary practice-item" data-practice="tss">T-Spin Single</button>
+          <button class="btn btn-secondary practice-item" data-practice="mini_tspin">Mini T-Spin</button>
+        </div>
+      </section>
+
+      <section class="practice-section">
+        <h3>Stacking</h3>
+        <div class="btn-group practice-grid">
+          <button class="btn btn-outline practice-item" data-practice="mountain">山岳積み</button>
+          <button class="btn btn-outline practice-item" data-practice="lst">LST stacking</button>
+          <button class="btn btn-outline practice-item" data-practice="six_three">6-3 stacking</button>
+        </div>
+      </section>
+
+      <section class="practice-section">
+        <h3>Battle / Utility</h3>
+        <div class="btn-group practice-grid">
+          <button class="btn btn-outline practice-item" data-practice="cheese_race">Cheese Race</button>
+          <button class="btn btn-outline practice-item" data-practice="combo_basic">Combo 基礎</button>
+          <button class="btn btn-outline practice-item" data-practice="b2b_keep">B2B 維持</button>
+        </div>
+      </section>
+    </div>
+
+    <button id="btn-back-mode" class="btn btn-outline">← 戻る</button>
+  </div>
+</div>
+
+<!-- ============================================================
      ルーム画面
 ============================================================ -->
 <div id="screen-room" class="screen" style="display:none">
@@ -73,7 +140,7 @@
       </div>
     </div>
 
-    <div id="room-status" class="room-status"></div>
+    <div class="room-status" id="room-status-fallback"></div>
     <button id="btn-back-title" class="btn btn-outline">← 戻る</button>
   </div>
 </div>

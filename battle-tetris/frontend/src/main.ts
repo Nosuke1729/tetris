@@ -1,5 +1,6 @@
 // ============================================================
 // main.ts  –  アプリケーションエントリポイント
+// Practice モード対応版
 // ============================================================
 
 import { GameEngine, LockEventData } from "./game/gameState";
@@ -7,31 +8,25 @@ import { Renderer } from "./ui/renderer";
 import { InputManager, InputAction } from "./ui/input";
 import { ScreenManager } from "./ui/screens";
 import { WsClient } from "./net/wsClient";
-import { ServerMessage, ClientMessage } from "../../shared/types";
+import { ServerMessage } from "../../shared/types";
 import { BOARD_WIDTH, VISIBLE_HEIGHT, SNAPSHOT_INTERVAL_MS } from "../../shared/constants";
 import { createEmptyBoard } from "./game/board";
 import { ClearResult } from "./game/scoring";
+import { getPracticePuzzle, clonePracticePuzzle, PracticePuzzle } from "./practice/catalog";
 
-// ============================================================
-// 定数・設定
-// ============================================================
 const CELL_SIZE = 30;
 const MINI_CELL = 14;
 const NEXT_CELL = 24;
 const API_BASE = "https://battle-tetris-server.onrender.com";
 
-// ============================================================
-// DOM 参照
-// ============================================================
-
-function el(id: string) { return document.getElementById(id) as HTMLElement; }
-function inp(id: string) { return document.getElementById(id) as HTMLInputElement; }
+function el(id: string) {
+  return document.getElementById(id) as HTMLElement;
+}
+function inp(id: string) {
+  return document.getElementById(id) as HTMLInputElement;
+}
 
 const screenMgr = new ScreenManager();
-
-// ============================================================
-// アプリ状態
-// ============================================================
 
 let engine: GameEngine | null = null;
 let renderer: Renderer | null = null;
@@ -39,6 +34,7 @@ let inputMgr: InputManager | null = null;
 let ws: WsClient | null = null;
 let rafId: number | null = null;
 let snapshotTimer: number | null = null;
+let practiceFinishTimer: number | null = null;
 
 let playerName = "Player";
 let roomId = "";
@@ -50,40 +46,83 @@ let opponentB2B = false;
 let opponentDanger = false;
 let clearLabel = "";
 let clearLabelTimer: number | null = null;
-let countdownNum = 0;
-let matchResult = "";
-let gameMode: "single" | "battle" = "single";
+let gameMode: "single" | "battle" | "practice" = "single";
 let roomJoined = false;
-
-// ============================================================
-// 初期化
-// ============================================================
+let currentPracticeId: string | null = null;
+let currentPractice: PracticePuzzle | null = null;
 
 window.addEventListener("DOMContentLoaded", () => {
   setupScreens();
   setupTitleScreen();
+  setupModeButtons();
+  setupPracticeButtons();
+  setupRoomButtons();
   screenMgr.show("title");
 });
 
 function setupScreens() {
   screenMgr.register("title", el("screen-title"));
-  screenMgr.register("room",  el("screen-room"));
-  screenMgr.register("game",  el("screen-game"));
-  screenMgr.register("result",el("screen-result"));
+  screenMgr.register("mode", el("screen-mode"));
+  screenMgr.register("practice", el("screen-practice"));
+  screenMgr.register("room", el("screen-room"));
+  screenMgr.register("game", el("screen-game"));
+  screenMgr.register("result", el("screen-result"));
 }
 
-// ============================================================
-// タイトル画面
-// ============================================================
-
 function setupTitleScreen() {
-  el("btn-single").onclick = () => startSingle();
+  el("btn-single").onclick = () => {
+    playerName = inp("input-name").value.trim() || "Player";
+    screenMgr.show("mode");
+  };
+
   el("btn-battle").onclick = () => showRoomSetup();
+}
+
+function setupModeButtons() {
+  el("btn-normal").onclick = () => startSingle();
+  el("btn-practice").onclick = () => {
+    screenMgr.show("practice");
+  };
+  el("btn-back-title-mode").onclick = () => {
+    screenMgr.show("title");
+  };
+  el("btn-back-mode").onclick = () => {
+    screenMgr.show("mode");
+  };
+}
+
+function setupPracticeButtons() {
+  document.querySelectorAll(".practice-item").forEach((node) => {
+    node.addEventListener("click", () => {
+      const btn = node as HTMLElement;
+      const practiceId = btn.dataset.practice;
+      if (!practiceId) return;
+      startPractice(practiceId);
+    });
+  });
 }
 
 function startSingle() {
   playerName = inp("input-name").value.trim() || "Player";
   gameMode = "single";
+  currentPracticeId = null;
+  currentPractice = null;
+  const seed = Math.floor(Math.random() * 0x7fffffff);
+  startGame(seed);
+}
+
+function startPractice(practiceId: string) {
+  const puzzleBase = getPracticePuzzle(practiceId);
+  if (!puzzleBase) {
+    alert(`Practice puzzle not found: ${practiceId}`);
+    return;
+  }
+
+  playerName = inp("input-name").value.trim() || "Player";
+  gameMode = "practice";
+  currentPracticeId = practiceId;
+  currentPractice = clonePracticePuzzle(puzzleBase);
+
   const seed = Math.floor(Math.random() * 0x7fffffff);
   startGame(seed);
 }
@@ -91,11 +130,13 @@ function startSingle() {
 function showRoomSetup() {
   playerName = inp("input-name").value.trim() || "Player";
   gameMode = "battle";
+  currentPracticeId = null;
+  currentPractice = null;
   roomId = "";
   roomJoined = false;
 
   screenMgr.show("room");
-  el("room-status").textContent = "部屋に参加するか、新しく作成してください。";
+  setRoomStatus("部屋に参加するか、新しく作成してください。");
   el("room-info").style.display = "none";
   el("btn-start").style.display = "none";
   el("btn-ready").style.display = "none";
@@ -113,9 +154,12 @@ function showRoomSetup() {
   el("ws-status").style.color = "#888";
 }
 
-// ============================================================
-// WebSocket
-// ============================================================
+function setRoomStatus(text: string) {
+  const main = document.getElementById("room-status");
+  const fallback = document.getElementById("room-status-fallback");
+  if (main) main.textContent = text;
+  if (fallback) fallback.textContent = text;
+}
 
 function getWsUrl(targetRoomId?: string): string {
   const base = __WS_URL__ || `ws://${location.hostname}:8787`;
@@ -125,7 +169,10 @@ function getWsUrl(targetRoomId?: string): string {
 }
 
 function setupWs(targetRoomId?: string, onOpen?: () => void) {
-  if (ws) { ws.disconnect(); ws = null; }
+  if (ws) {
+    ws.disconnect();
+    ws = null;
+  }
 
   ws = new WsClient(getWsUrl(targetRoomId));
   ws.connect(() => {
@@ -139,48 +186,49 @@ function setupWs(targetRoomId?: string, onOpen?: () => void) {
 function handleServerMsg(msg: ServerMessage) {
   switch (msg.type) {
     case "room_created":
-  roomId = msg.roomId;
-  isHost = true;
-  roomJoined = true;
-  disableRoomButtons();
+      roomId = msg.roomId;
+      isHost = true;
+      roomJoined = true;
+      disableRoomButtons();
 
-  el("room-id-display").textContent = msg.roomId;
-  el("room-info").style.display = "";
-  el("room-status").textContent = "部屋を作成しました。対戦相手を待っています…";
-  el("btn-ready").style.display = "";
-  break;
+      el("room-id-display").textContent = msg.roomId;
+      el("room-info").style.display = "";
+      setRoomStatus("部屋を作成しました。対戦相手を待っています…");
+      el("btn-ready").style.display = "";
+      break;
 
-case "room_joined":
-  roomId = msg.roomId;
-  isHost = msg.isHost;
-  roomJoined = true;
-  disableRoomButtons();
+    case "room_joined":
+      roomId = msg.roomId;
+      isHost = msg.isHost;
+      roomJoined = true;
+      disableRoomButtons();
 
-  el("room-id-display").textContent = msg.roomId;
-  el("room-info").style.display = "";
-  el("room-status").textContent = `参加しました (${msg.players.length}/2)`;
-  el("player-list").innerHTML = msg.players.map(p => `<div>${p.name}</div>`).join("");
-  el("btn-ready").style.display = "";
-  if (isHost && msg.players.length === 2) el("btn-start").style.display = "";
-  break;
+      el("room-id-display").textContent = msg.roomId;
+      el("room-info").style.display = "";
+      setRoomStatus(`参加しました (${msg.players.length}/2)`);
+      el("player-list").innerHTML = msg.players.map((p) => `<div>${p.name}</div>`).join("");
+      el("btn-ready").style.display = "";
+      if (isHost && msg.players.length === 2) el("btn-start").style.display = "";
+      break;
 
     case "player_joined":
-      el("room-status").textContent = "対戦相手が参加しました！";
+      setRoomStatus("対戦相手が参加しました！");
       el("player-list").innerHTML += `<div>${msg.player.name}</div>`;
       if (isHost) el("btn-start").style.display = "";
       break;
 
     case "player_left":
-      el("room-status").textContent = "対戦相手が退出しました。";
+      setRoomStatus("対戦相手が退出しました。");
       el("btn-start").style.display = "none";
       break;
 
     case "countdown":
-      countdownNum = msg.seconds;
       el("countdown-overlay").textContent = msg.seconds > 0 ? `${msg.seconds}` : "GO!";
       el("countdown-overlay").style.display = "";
       if (msg.seconds === 0) {
-        setTimeout(() => { el("countdown-overlay").style.display = "none"; }, 700);
+        setTimeout(() => {
+          el("countdown-overlay").style.display = "none";
+        }, 700);
       }
       break;
 
@@ -209,14 +257,9 @@ case "room_joined":
       break;
 
     case "player_ready":
-      // 準備完了通知（UI更新）
       break;
   }
 }
-
-// ============================================================
-// ルーム画面ボタン
-// ============================================================
 
 function disableRoomButtons() {
   (el("btn-create-room") as HTMLButtonElement).disabled = true;
@@ -230,85 +273,112 @@ function enableRoomButtons() {
 
 function setupRoomButtons() {
   el("btn-create-room").onclick = async () => {
-  if (roomJoined) return;
+    if (roomJoined) return;
 
-  try {
-    disableRoomButtons();
+    try {
+      disableRoomButtons();
 
-const res = await fetch(`${API_BASE}/rooms`, {
-  method: "POST",
-});
+      const res = await fetch(`${API_BASE}/rooms`, {
+        method: "POST",
+      });
 
-    if (!res.ok) {
-      throw new Error("部屋作成に失敗しました");
+      if (!res.ok) {
+        throw new Error("部屋作成に失敗しました");
+      }
+
+      const data = await res.json();
+      roomId = data.roomId;
+
+      setupWs(roomId, () => {
+        ws?.send({ type: "create_room", playerName });
+      });
+    } catch (err) {
+      console.error(err);
+      alert("部屋作成に失敗しました");
+      enableRoomButtons();
+    }
+  };
+
+  el("btn-join-room").onclick = () => {
+    if (roomJoined) return;
+
+    const rid = inp("input-room-id").value.trim().toUpperCase();
+    if (!rid) {
+      alert("部屋IDを入力してください");
+      return;
     }
 
-    const data = await res.json();
-    const newRoomId = data.roomId;
-
-    roomId = newRoomId;
+    disableRoomButtons();
+    roomId = rid;
 
     setupWs(roomId, () => {
-      ws?.send({ type: "create_room", playerName });
+      ws?.send({ type: "join_room", roomId: rid, playerName });
     });
-  } catch (err) {
-    console.error(err);
-    alert("部屋作成に失敗しました");
-    enableRoomButtons();
-  }
-};
-el("btn-join-room").onclick = () => {
-  if (roomJoined) return;
+  };
 
-  const rid = inp("input-room-id").value.trim().toUpperCase();
-  if (!rid) return alert("部屋IDを入力してください");
-
-  disableRoomButtons();
-  roomId = rid;
-
-  setupWs(roomId, () => {
-    ws?.send({ type: "join_room", roomId: rid, playerName });
-  });
-};
   el("btn-ready").onclick = () => {
     ws?.send({ type: "ready" });
     el("btn-ready").textContent = "準備完了！";
     (el("btn-ready") as HTMLButtonElement).disabled = true;
   };
+
   el("btn-start").onclick = () => {
     ws?.send({ type: "start_game" });
   };
+
   el("btn-copy-room").onclick = () => {
-    navigator.clipboard.writeText(roomId).then(() => alert("コピーしました: " + roomId));
+    navigator.clipboard.writeText(roomId).then(() => {
+      alert("コピーしました: " + roomId);
+    });
   };
-el("btn-back-title").onclick = () => {
-  ws?.send({ type: "leave_room" });
-  if (ws) {
-    ws.disconnect();
-    ws = null;
-  }
-  roomJoined = false;
-  roomId = "";
-  enableRoomButtons();
-  screenMgr.show("title");
-};
+
+  el("btn-back-title").onclick = () => {
+    ws?.send({ type: "leave_room" });
+    if (ws) {
+      ws.disconnect();
+      ws = null;
+    }
+    roomJoined = false;
+    roomId = "";
+    enableRoomButtons();
+    screenMgr.show("title");
+  };
 }
 
-// ============================================================
-// ゲーム開始
-// ============================================================
+function applyPracticeSession(): boolean {
+  if (!engine || !renderer || !currentPractice) return false;
+
+  engine.loadPracticeState({
+    board: currentPractice.board,
+    activePiece: currentPractice.activePiece,
+    holdPiece: currentPractice.holdPiece,
+    nextQueue: currentPractice.nextQueue,
+    targetMask: currentPractice.targetMask,
+    objective: currentPractice.objective,
+    practiceName: currentPractice.name,
+  });
+
+  renderer.setPracticeOverlay({
+    targetCells: currentPractice.targetMask,
+    highlightMatched: true,
+  });
+
+  return true;
+}
 
 function startGame(seed: number) {
-  screenMgr.show("game");
   opponentBoard = createEmptyBoard();
   clearLabel = "";
-  countdownNum = 0;
+
+  if (practiceFinishTimer) {
+    clearTimeout(practiceFinishTimer);
+    practiceFinishTimer = null;
+  }
 
   const rematchBtn = el("btn-rematch") as HTMLButtonElement;
   rematchBtn.textContent = "再戦";
   rematchBtn.disabled = false;
 
-  // Canvas セットアップ
   const canvas = el("game-canvas") as HTMLCanvasElement;
   const LEFT_PANEL_W = 150;
   const RIGHT_PANEL_W = 150;
@@ -326,34 +396,53 @@ function startGame(seed: number) {
   canvas.width = canvasW;
   canvas.height = canvasH;
   renderer = new Renderer(canvas, CELL_SIZE);
+  renderer.clearPracticeOverlay();
 
-  // エンジン起動
   engine = new GameEngine(seed, {
     onLock: handleLock,
     onGameOver: handleGameOver,
     onClear: handleClear,
+    onPracticeSuccess: (info) => {
+      showClearLabel(`${info.practiceName ?? "PRACTICE"} CLEAR!`);
+      if (practiceFinishTimer) clearTimeout(practiceFinishTimer);
+      practiceFinishTimer = window.setTimeout(() => {
+        endGame("practice_clear");
+      }, 900);
+    },
   });
 
-  // 入力
+  if (gameMode === "practice") {
+    if (!applyPracticeSession()) {
+      alert("Practice の読み込みに失敗しました。");
+      screenMgr.show("practice");
+      return;
+    }
+  }
+
   if (inputMgr) inputMgr.destroy();
   inputMgr = new InputManager(handleInput);
 
-  // UI
   setupGameUI();
 
-  // ゲームループ
   if (rafId) cancelAnimationFrame(rafId);
   const loop = (now: number) => {
-    engine!.tick(now);
+    if (!engine) return;
+    engine.tick(now);
     renderFrame();
     rafId = requestAnimationFrame(loop);
   };
   rafId = requestAnimationFrame(loop);
 
-  // スナップショット送信 (バトルのみ)
+  if (snapshotTimer) {
+    clearInterval(snapshotTimer);
+    snapshotTimer = null;
+  }
+
   if (gameMode === "battle") {
     snapshotTimer = window.setInterval(sendSnapshot, SNAPSHOT_INTERVAL_MS);
   }
+
+  screenMgr.show("game");
 }
 
 function setupGameUI() {
@@ -363,29 +452,42 @@ function setupGameUI() {
   el("opponent-area").style.display = gameMode === "battle" ? "" : "none";
 }
 
-// ============================================================
-// 入力ハンドラ
-// ============================================================
-
 function handleInput(action: InputAction) {
   if (!engine) return;
+
   switch (action) {
-    case "moveLeft":      engine.moveLeft(); break;
-    case "moveRight":     engine.moveRight(); break;
-    case "softDropStart": engine.setSoftDrop(true); break;
-    case "softDropEnd":   engine.setSoftDrop(false); break;
-    case "hardDrop":      engine.hardDrop(); break;
-    case "rotateCW":      engine.rotate("cw"); break;
-    case "rotateCCW":     engine.rotate("ccw"); break;
-    case "hold":          engine.hold(); break;
-    case "pause":         togglePause(); break;
-    case "exit":          exitGame(); break;
+    case "moveLeft":
+      engine.moveLeft();
+      break;
+    case "moveRight":
+      engine.moveRight();
+      break;
+    case "softDropStart":
+      engine.setSoftDrop(true);
+      break;
+    case "softDropEnd":
+      engine.setSoftDrop(false);
+      break;
+    case "hardDrop":
+      engine.hardDrop();
+      break;
+    case "rotateCW":
+      engine.rotate("cw");
+      break;
+    case "rotateCCW":
+      engine.rotate("ccw");
+      break;
+    case "hold":
+      engine.hold();
+      break;
+    case "pause":
+      togglePause();
+      break;
+    case "exit":
+      exitGame();
+      break;
   }
 }
-
-// ============================================================
-// ロック処理
-// ============================================================
 
 function handleLock(data: LockEventData) {
   if (gameMode === "battle" && ws) {
@@ -410,14 +512,16 @@ function handleClear(result: ClearResult) {
 function handleGameOver() {
   if (gameMode === "single") {
     endGame("single");
-  } else {
-    ws?.send({ type: "game_over" });
+    return;
   }
-}
 
-// ============================================================
-// スナップショット送信
-// ============================================================
+  if (gameMode === "practice") {
+    endGame("practice");
+    return;
+  }
+
+  ws?.send({ type: "game_over" });
+}
 
 function sendSnapshot() {
   if (!engine || !ws) return;
@@ -432,39 +536,30 @@ function sendSnapshot() {
   });
 }
 
-// ============================================================
-// レンダリング
-// ============================================================
-
 function renderFrame() {
   if (!engine || !renderer) return;
   const s = engine.state;
   const canvas = el("game-canvas") as HTMLCanvasElement;
-  const ctx = (canvas as HTMLCanvasElement).getContext("2d")!;
+  const ctx = canvas.getContext("2d")!;
 
   renderer.clear();
 
   const PANEL_W = 150;
   const BOARD_PX = CELL_SIZE * BOARD_WIDTH;
 
-  // 左パネル (Hold / レベル)
   drawLeftPanel(ctx, s, PANEL_W);
 
-  // メイン盤面 (Renderer の offset を調整)
-  (renderer as any).offsetX = PANEL_W;
-  (renderer as any).offsetY = 0;
+  (renderer as unknown as { offsetX: number; offsetY: number }).offsetX = PANEL_W;
+  (renderer as unknown as { offsetX: number; offsetY: number }).offsetY = 0;
   renderer.drawBoard(s.board, s.activePiece, engine.getGhostY(), s.pendingGarbage);
 
-  // 右パネル (Next / Score)
   drawRightPanel(ctx, s, PANEL_W + BOARD_PX);
 
-  // 相手盤面
   if (gameMode === "battle") {
     const oppX = PANEL_W + BOARD_PX + PANEL_W + 10;
     drawOpponentPanel(ctx, oppX);
   }
 
-  // クリアラベル
   if (clearLabel) {
     ctx.save();
     ctx.font = "bold 22px 'Courier New', monospace";
@@ -476,7 +571,6 @@ function renderFrame() {
     ctx.restore();
   }
 
-  // ポーズオーバーレイ
   if (s.isPaused) {
     ctx.fillStyle = "rgba(0,0,0,0.6)";
     ctx.fillRect(PANEL_W, 0, BOARD_PX, CELL_SIZE * VISIBLE_HEIGHT);
@@ -486,7 +580,6 @@ function renderFrame() {
     ctx.fillText("PAUSED", PANEL_W + BOARD_PX / 2, CELL_SIZE * VISIBLE_HEIGHT / 2);
   }
 
-  // ゲームオーバーオーバーレイ
   if (s.isGameOver) {
     ctx.fillStyle = "rgba(0,0,0,0.7)";
     ctx.fillRect(PANEL_W, 0, BOARD_PX, CELL_SIZE * VISIBLE_HEIGHT);
@@ -497,9 +590,10 @@ function renderFrame() {
   }
 }
 
-function drawLeftPanel(ctx: CanvasRenderingContext2D, s: any, panelW: number) {
+function drawLeftPanel(ctx: CanvasRenderingContext2D, s: typeof engine extends GameEngine ? never : any, panelW: number) {
   ctx.fillStyle = "#0d0d0d";
   ctx.fillRect(0, 0, panelW, CELL_SIZE * VISIBLE_HEIGHT);
+
   ctx.fillStyle = "#555";
   ctx.font = "12px monospace";
   ctx.textAlign = "left";
@@ -513,39 +607,89 @@ function drawLeftPanel(ctx: CanvasRenderingContext2D, s: any, panelW: number) {
   ctx.font = "10px monospace";
   ctx.fillText(s.usedHold ? "(使用済)" : "(可)", 10, 85);
 
-  // レベル
   ctx.fillStyle = "#555";
   ctx.font = "12px monospace";
   ctx.fillText("LEVEL", 10, 110);
+
   ctx.fillStyle = "#fff";
   ctx.font = "bold 28px monospace";
   ctx.fillText(String(s.level), 10, 140);
 
-  // Combo
   if (s.combo > 1) {
     ctx.fillStyle = "#ff8800";
     ctx.font = "bold 14px monospace";
     ctx.fillText(`${s.combo} COMBO`, 10, 170);
   }
 
-  // B2B
   if (s.backToBack) {
     ctx.fillStyle = "#00cfff";
     ctx.font = "bold 12px monospace";
     ctx.fillText("B2B", 10, 190);
   }
 
-  // ゴミ予告
   if (s.pendingGarbage > 0) {
     ctx.fillStyle = "#ff3333";
     ctx.font = "bold 12px monospace";
     ctx.fillText(`GARBAGE: ${s.pendingGarbage}`, 6, 220);
   }
+
+  if (gameMode === "practice" && currentPractice) {
+    ctx.fillStyle = "#777";
+    ctx.font = "12px monospace";
+    ctx.fillText("MODE", 10, 255);
+
+    ctx.fillStyle = "#ffd700";
+    ctx.font = "bold 14px monospace";
+    ctx.fillText("PRACTICE", 10, 275);
+  }
 }
 
-function drawRightPanel(ctx: CanvasRenderingContext2D, s: any, startX: number) {
+function drawRightPanel(ctx: CanvasRenderingContext2D, s: typeof engine extends GameEngine ? never : any, startX: number) {
   ctx.fillStyle = "#0d0d0d";
   ctx.fillRect(startX, 0, 150, CELL_SIZE * VISIBLE_HEIGHT);
+
+  if (gameMode === "practice" && currentPractice) {
+    ctx.fillStyle = "#777";
+    ctx.font = "12px monospace";
+    ctx.textAlign = "left";
+    ctx.fillText("PRACTICE", startX + 8, 20);
+
+    ctx.fillStyle = "#ffd700";
+    ctx.font = "bold 12px monospace";
+    wrapText(ctx, currentPractice.name, startX + 8, 40, 132, 16);
+
+    ctx.fillStyle = "#00cfff";
+    ctx.font = "11px monospace";
+    wrapText(ctx, `[${currentPractice.category}]`, startX + 8, 76, 132, 14);
+
+    ctx.fillStyle = "#aaa";
+    ctx.font = "10px monospace";
+    wrapText(ctx, currentPractice.description, startX + 8, 100, 132, 14);
+
+    ctx.fillStyle = "#555";
+    ctx.font = "12px monospace";
+    ctx.fillText("NEXT", startX + 8, 160);
+
+    for (let i = 0; i < Math.min(3, s.nextQueue.length); i++) {
+      renderer!.drawPiecePreview(s.nextQueue[i], startX + 8, 168 + i * 52, NEXT_CELL);
+    }
+
+    ctx.fillStyle = "#555";
+    ctx.font = "12px monospace";
+    ctx.fillText("SCORE", startX + 8, CELL_SIZE * VISIBLE_HEIGHT - 100);
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 18px monospace";
+    ctx.fillText(String(s.score), startX + 8, CELL_SIZE * VISIBLE_HEIGHT - 78);
+
+    ctx.fillStyle = "#555";
+    ctx.font = "12px monospace";
+    ctx.fillText("LINES", startX + 8, CELL_SIZE * VISIBLE_HEIGHT - 55);
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 18px monospace";
+    ctx.fillText(String(s.lines), startX + 8, CELL_SIZE * VISIBLE_HEIGHT - 33);
+    return;
+  }
+
   ctx.fillStyle = "#555";
   ctx.font = "12px monospace";
   ctx.textAlign = "left";
@@ -593,19 +737,41 @@ function drawOpponentPanel(ctx: CanvasRenderingContext2D, startX: number) {
   }
 }
 
-// ============================================================
-// クリアラベル表示
-// ============================================================
+function wrapText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  lineHeight: number
+) {
+  const chars = text.split("");
+  let line = "";
+  let cy = y;
+
+  for (const ch of chars) {
+    const test = line + ch;
+    if (ctx.measureText(test).width > maxWidth && line.length > 0) {
+      ctx.fillText(line, x, cy);
+      line = ch;
+      cy += lineHeight;
+    } else {
+      line = test;
+    }
+  }
+
+  if (line) {
+    ctx.fillText(line, x, cy);
+  }
+}
 
 function showClearLabel(label: string) {
   clearLabel = label;
   if (clearLabelTimer) clearTimeout(clearLabelTimer);
-  clearLabelTimer = window.setTimeout(() => { clearLabel = ""; }, 1200);
+  clearLabelTimer = window.setTimeout(() => {
+    clearLabel = "";
+  }, 1200);
 }
-
-// ============================================================
-// ポーズ・退出
-// ============================================================
 
 function togglePause() {
   if (!engine) return;
@@ -620,20 +786,37 @@ function togglePause() {
 
 function exitGame() {
   stopGame();
-  ws?.send({ type: "leave_room" });
-  screenMgr.show("title");
+
+  if (gameMode === "battle") {
+    ws?.send({ type: "leave_room" });
+    screenMgr.show("title");
+    return;
+  }
+
+  if (gameMode === "practice") {
+    screenMgr.show("practice");
+    return;
+  }
+
+  screenMgr.show("mode");
 }
 
 function stopGame() {
-  if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-  if (snapshotTimer) { clearInterval(snapshotTimer); snapshotTimer = null; }
+  if (rafId) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+  if (snapshotTimer) {
+    clearInterval(snapshotTimer);
+    snapshotTimer = null;
+  }
+  if (practiceFinishTimer) {
+    clearTimeout(practiceFinishTimer);
+    practiceFinishTimer = null;
+  }
   inputMgr?.destroy();
   inputMgr = null;
 }
-
-// ============================================================
-// ゲーム終了・結果
-// ============================================================
 
 function endGame(result: string) {
   stopGame();
@@ -641,16 +824,28 @@ function endGame(result: string) {
 
   const s = engine?.state;
 
-  el("result-label").textContent =
-    result === "win" ? "🏆 YOU WIN!" :
-    result === "lose" ? "💀 YOU LOSE" :
-    result === "draw" ? "🤝 DRAW" :
-    "GAME OVER";
+  let label = "GAME OVER";
+  let color = "#aaa";
 
-  el("result-label").style.color =
-    result === "win" ? "#ffd700" :
-    result === "lose" ? "#ff4444" :
-    "#aaa";
+  if (result === "win") {
+    label = "🏆 YOU WIN!";
+    color = "#ffd700";
+  } else if (result === "lose") {
+    label = "💀 YOU LOSE";
+    color = "#ff4444";
+  } else if (result === "draw") {
+    label = "🤝 DRAW";
+    color = "#aaa";
+  } else if (result === "practice_clear") {
+    label = "PRACTICE CLEAR!";
+    color = "#ffd700";
+  } else if (result === "practice") {
+    label = "PRACTICE END";
+    color = "#ffcc66";
+  }
+
+  el("result-label").textContent = label;
+  el("result-label").style.color = color;
 
   el("result-score").textContent = `Score: ${s?.score ?? 0}`;
   el("result-lines").textContent = `Lines: ${s?.lines ?? 0}`;
@@ -672,14 +867,15 @@ function endGame(result: string) {
     screenMgr.show("title");
   };
 
-  el("btn-play-again").onclick = () => startSingle();
-  el("btn-play-again").style.display = gameMode === "single" ? "" : "none";
+  el("btn-play-again").onclick = () => {
+    if (gameMode === "practice" && currentPracticeId) {
+      startPractice(currentPracticeId);
+      return;
+    }
+    startSingle();
+  };
+
+  el("btn-play-again").style.display = gameMode === "battle" ? "none" : "";
 }
 
-// ============================================================
-// ルーム画面初期化 (DOM ready 後)
-// ============================================================
-
-window.addEventListener("DOMContentLoaded", () => {
-  setupRoomButtons();
-});
+declare const __WS_URL__: string | undefined;
