@@ -1,6 +1,6 @@
 // ============================================================
 // ui/renderer.ts  –  Canvas 描画エンジン
-// Practice overlay 対応版
+// Practice overlay 強化版
 // ============================================================
 
 import { Board } from "../game/board";
@@ -30,11 +30,19 @@ const COLORS = [
 ];
 
 export type PracticeOverlayData = {
-  targetCells: boolean[][];
-  highlightMatched?: boolean;
-  color?: string;
-  matchedColor?: string;
-  borderColor?: string;
+  overlayBoard: number[][];
+  highlightPieceType?: PieceType | null;
+  showMatchedOutline?: boolean;
+};
+
+const PIECE_TO_ID: Record<PieceType, number> = {
+  I: 1,
+  O: 2,
+  T: 3,
+  S: 4,
+  Z: 5,
+  J: 6,
+  L: 7,
 };
 
 export class Renderer {
@@ -179,44 +187,47 @@ export class Renderer {
     const cs = this.cellSize;
     const ox = this.offsetX;
     const oy = this.offsetY;
-
-    const target = this.practiceOverlay.targetCells;
-    const overlayColor =
-      this.practiceOverlay.color ?? "rgba(0, 207, 255, 0.18)";
-    const matchedColor =
-      this.practiceOverlay.matchedColor ?? "rgba(255, 215, 0, 0.28)";
-    const borderColor =
-      this.practiceOverlay.borderColor ?? "rgba(255,255,255,0.28)";
-    const highlightMatched = this.practiceOverlay.highlightMatched ?? true;
+    const overlayBoard = this.practiceOverlay.overlayBoard;
+    const highlightType = this.practiceOverlay.highlightPieceType ?? null;
+    const highlightId = highlightType ? PIECE_TO_ID[highlightType] : 0;
+    const showMatchedOutline = this.practiceOverlay.showMatchedOutline ?? true;
 
     for (let row = hiddenRows; row < BOARD_HEIGHT; row++) {
       for (let col = 0; col < BOARD_WIDTH; col++) {
-        const isTarget = !!target[row]?.[col];
-        if (!isTarget) continue;
+        const v = overlayBoard[row]?.[col] ?? 0;
+        if (!v) continue;
 
         const screenX = ox + col * cs;
         const screenY = oy + (row - hiddenRows) * cs;
+        const color = COLORS[v] || "#ffffff";
+        const isCurrentPieceTarget = v === highlightId;
         const occupied = board[row][col] !== 0;
 
         ctx.save();
-        ctx.fillStyle =
-          occupied && highlightMatched ? matchedColor : overlayColor;
+
+        ctx.globalAlpha = isCurrentPieceTarget ? 0.34 : 0.18;
+        ctx.fillStyle = color;
         ctx.fillRect(screenX + 2, screenY + 2, cs - 4, cs - 4);
 
-        ctx.strokeStyle = borderColor;
-        ctx.lineWidth = 1;
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = isCurrentPieceTarget
+          ? color
+          : "rgba(255,255,255,0.22)";
+        ctx.lineWidth = isCurrentPieceTarget ? 2.2 : 1;
         ctx.strokeRect(screenX + 2.5, screenY + 2.5, cs - 5, cs - 5);
 
-        ctx.beginPath();
-        ctx.moveTo(screenX + 4, screenY + cs - 4);
-        ctx.lineTo(screenX + cs - 4, screenY + 4);
-        ctx.stroke();
+        if (isCurrentPieceTarget) {
+          ctx.strokeStyle = "rgba(255,255,255,0.38)";
+          ctx.lineWidth = 1;
+          ctx.strokeRect(screenX + 5, screenY + 5, cs - 10, cs - 10);
+        }
 
-        if (occupied && highlightMatched) {
-          ctx.strokeStyle = "rgba(255,215,0,0.75)";
-          ctx.lineWidth = 1.5;
+        if (occupied && showMatchedOutline) {
+          ctx.strokeStyle = "rgba(255,215,0,0.85)";
+          ctx.lineWidth = 1.8;
           ctx.strokeRect(screenX + 4, screenY + 4, cs - 8, cs - 8);
         }
+
         ctx.restore();
       }
     }
