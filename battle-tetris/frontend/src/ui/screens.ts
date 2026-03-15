@@ -2,7 +2,7 @@
 // ui/screens.ts  –  画面切り替え管理
 // ============================================================
 
-export type Screen = "title" | "room" | "game" | "result";
+export type Screen = "title" | "mode" | "practice" | "room" | "game" | "result";
 
 export class ScreenManager {
   private current: Screen = "title";
@@ -19,5 +19,7 @@ export class ScreenManager {
     this.current = screen;
   }
 
-  getCurrent(): Screen { return this.current; }
+  getCurrent(): Screen {
+    return this.current;
+  }
 }
