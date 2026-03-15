@@ -1,6 +1,6 @@
 // ============================================================
 // main.ts  –  アプリケーションエントリポイント
-// Practice モード対応版
+// Practice UX 改善版
 // ============================================================
 
 import { GameEngine, LockEventData } from "./game/gameState";
@@ -359,8 +359,9 @@ function applyPracticeSession(): boolean {
   });
 
   renderer.setPracticeOverlay({
-    targetCells: currentPractice.targetMask,
-    highlightMatched: true,
+    overlayBoard: currentPractice.overlayBoard,
+    highlightPieceType: engine.state.activePiece?.type ?? null,
+    showMatchedOutline: true,
   });
 
   return true;
@@ -426,7 +427,16 @@ function startGame(seed: number) {
 
   if (rafId) cancelAnimationFrame(rafId);
   const loop = (now: number) => {
-    if (!engine) return;
+    if (!engine || !renderer) return;
+
+    if (gameMode === "practice" && currentPractice) {
+      renderer.setPracticeOverlay({
+        overlayBoard: currentPractice.overlayBoard,
+        highlightPieceType: engine.state.activePiece?.type ?? null,
+        showMatchedOutline: true,
+      });
+    }
+
     engine.tick(now);
     renderFrame();
     rafId = requestAnimationFrame(loop);
@@ -448,6 +458,7 @@ function startGame(seed: number) {
 function setupGameUI() {
   el("btn-pause").onclick = togglePause;
   el("btn-exit-game").onclick = exitGame;
+  el("btn-pause").textContent = "一時停止";
   el("countdown-overlay").style.display = "none";
   el("opponent-area").style.display = gameMode === "battle" ? "" : "none";
 }
@@ -590,7 +601,7 @@ function renderFrame() {
   }
 }
 
-function drawLeftPanel(ctx: CanvasRenderingContext2D, s: typeof engine extends GameEngine ? never : any, panelW: number) {
+function drawLeftPanel(ctx: CanvasRenderingContext2D, s: any, panelW: number) {
   ctx.fillStyle = "#0d0d0d";
   ctx.fillRect(0, 0, panelW, CELL_SIZE * VISIBLE_HEIGHT);
 
@@ -644,11 +655,13 @@ function drawLeftPanel(ctx: CanvasRenderingContext2D, s: typeof engine extends G
   }
 }
 
-function drawRightPanel(ctx: CanvasRenderingContext2D, s: typeof engine extends GameEngine ? never : any, startX: number) {
+function drawRightPanel(ctx: CanvasRenderingContext2D, s: any, startX: number) {
   ctx.fillStyle = "#0d0d0d";
   ctx.fillRect(startX, 0, 150, CELL_SIZE * VISIBLE_HEIGHT);
 
   if (gameMode === "practice" && currentPractice) {
+    const currentType = s.activePiece?.type ?? "-";
+
     ctx.fillStyle = "#777";
     ctx.font = "12px monospace";
     ctx.textAlign = "left";
@@ -660,18 +673,26 @@ function drawRightPanel(ctx: CanvasRenderingContext2D, s: typeof engine extends 
 
     ctx.fillStyle = "#00cfff";
     ctx.font = "11px monospace";
-    wrapText(ctx, `[${currentPractice.category}]`, startX + 8, 76, 132, 14);
+    wrapText(ctx, `[${currentPractice.category}]`, startX + 8, 74, 132, 14);
+
+    ctx.fillStyle = "#888";
+    ctx.font = "10px monospace";
+    ctx.fillText("NOW", startX + 8, 102);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 12px monospace";
+    wrapText(ctx, `${currentType} ミノを同じ色の影へ`, startX + 8, 118, 132, 14);
 
     ctx.fillStyle = "#aaa";
     ctx.font = "10px monospace";
-    wrapText(ctx, currentPractice.description, startX + 8, 100, 132, 14);
+    wrapText(ctx, currentPractice.hint, startX + 8, 154, 132, 14);
 
     ctx.fillStyle = "#555";
     ctx.font = "12px monospace";
-    ctx.fillText("NEXT", startX + 8, 160);
+    ctx.fillText("NEXT", startX + 8, 220);
 
     for (let i = 0; i < Math.min(3, s.nextQueue.length); i++) {
-      renderer!.drawPiecePreview(s.nextQueue[i], startX + 8, 168 + i * 52, NEXT_CELL);
+      renderer!.drawPiecePreview(s.nextQueue[i], startX + 8, 228 + i * 52, NEXT_CELL);
     }
 
     ctx.fillStyle = "#555";
