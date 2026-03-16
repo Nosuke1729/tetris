@@ -2,6 +2,7 @@ import express from "express";
 import http from "http";
 import cors from "cors";
 import { WebSocketServer } from "ws";
+import crypto from "crypto";
 
 const app = express();
 app.use(cors());
@@ -11,9 +12,8 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 const PORT = process.env.PORT || 3000;
-
 const COUNTDOWN_SECONDS = 3;
-const rooms = new Map(); // roomId -> room
+const rooms = new Map();
 
 function generateRoomId() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -22,11 +22,20 @@ function generateRoomId() {
 function createEmptyRoom(roomId) {
   return {
     roomId,
-    status: "waiting", // waiting | countdown | playing | finished
-    players: [],       // [{ id, name, ws, ready, alive, score, lines, combo, backToBack, pendingGarbage, board }]
+    status: "waiting",
+    players: [],
     rematchVotes: [],
-    seed: 0
+    seed: 0,
+    countdownTimerIds: [],
   };
+}
+
+function clearRoomCountdown(room) {
+  if (!room) return;
+  for (const id of room.countdownTimerIds) {
+    clearTimeout(id);
+  }
+  room.countdownTimerIds = [];
 }
 
 function send(ws, msg) {
@@ -43,10 +52,94 @@ function broadcast(room, msg, excludeId = null) {
 
 function findPlayerRoom(playerId) {
   for (const room of rooms.values()) {
-    const p = room.players.find(x => x.id === playerId);
+    const p = room.players.find((x) => x.id === playerId);
     if (p) return room;
   }
   return null;
+}
+
+function getDanger(board) {
+  if (!Array.isArray(board)) return false;
+  return board.slice(0, 4).some((row) => Array.isArray(row) && row.some((c) => c !== 0));
+}
+
+function removePlayerFromRoom(room, playerId, reason = "left") {
+  if (!room) return;
+
+  const leavingPlayer = room.players.find((p) => p.id === playerId);
+  room.players = room.players.filter((p) => p.id !== playerId);
+  room.rematchVotes = room.rematchVotes.filter((id) => id !== playerId);
+
+  broadcast(room, { type: "player_left", playerId, reason });
+
+  if (room.status === "playing" && room.players.length === 1) {
+    const survivor = room.players[0];
+    room.status = "finished";
+    clearRoomCountdown(room);
+
+    if (survivor?.ws?.readyState === 1) {
+      send(survivor.ws, { type: "match_result", result: "win" });
+    }
+  }
+
+  if (room.players.length === 0) {
+    clearRoomCountdown(room);
+    rooms.delete(room.roomId);
+    return;
+  }
+
+  if (room.players.length === 1 && room.status === "countdown") {
+    room.status = "waiting";
+    clearRoomCountdown(room);
+  }
+
+  if (room.players.length === 1 && room.status === "finished") {
+    room.status = "waiting";
+  }
+
+  if (leavingPlayer && leavingPlayer.ws) {
+    try {
+      leavingPlayer.ws.close();
+    } catch (_) {}
+  }
+}
+
+function startCountdown(room) {
+  room.status = "countdown";
+  clearRoomCountdown(room);
+
+  let sec = COUNTDOWN_SECONDS;
+
+  const tick = () => {
+    broadcast(room, { type: "countdown", seconds: sec });
+
+    if (sec === 0) {
+      room.seed = Math.floor(Math.random() * 0x7fffffff);
+      room.status = "playing";
+
+      for (const p of room.players) {
+        p.alive = true;
+        p.score = 0;
+        p.lines = 0;
+        p.combo = 0;
+        p.backToBack = false;
+        p.pendingGarbage = 0;
+        p.board = [];
+        p.ready = false;
+      }
+
+      room.rematchVotes = [];
+      broadcast(room, { type: "game_start", seed: room.seed });
+      room.countdownTimerIds = [];
+      return;
+    }
+
+    sec -= 1;
+    const id = setTimeout(tick, 1000);
+    room.countdownTimerIds.push(id);
+  };
+
+  tick();
 }
 
 app.get("/", (_req, res) => {
@@ -54,7 +147,10 @@ app.get("/", (_req, res) => {
 });
 
 app.post("/rooms", (_req, res) => {
-  const roomId = generateRoomId();
+  let roomId = generateRoomId();
+  while (rooms.has(roomId)) {
+    roomId = generateRoomId();
+  }
   rooms.set(roomId, createEmptyRoom(roomId));
   res.json({ roomId });
 });
@@ -104,7 +200,7 @@ wss.on("connection", (ws, req) => {
         combo: 0,
         backToBack: false,
         pendingGarbage: 0,
-        board: []
+        board: [],
       };
 
       room.players.push(player);
@@ -141,7 +237,7 @@ wss.on("connection", (ws, req) => {
         combo: 0,
         backToBack: false,
         pendingGarbage: 0,
-        board: []
+        board: [],
       };
 
       room.players.push(player);
@@ -149,14 +245,18 @@ wss.on("connection", (ws, req) => {
       send(ws, {
         type: "room_joined",
         roomId: rid,
-        players: room.players.map(p => ({ id: p.id, name: p.name })),
-        isHost: room.players[0]?.id === playerId
+        players: room.players.map((p) => ({ id: p.id, name: p.name })),
+        isHost: room.players[0]?.id === playerId,
       });
 
-      broadcast(room, {
-        type: "player_joined",
-        player: { id: playerId, name: msg.playerName }
-      }, playerId);
+      broadcast(
+        room,
+        {
+          type: "player_joined",
+          player: { id: playerId, name: msg.playerName },
+        },
+        playerId
+      );
 
       return;
     }
@@ -164,7 +264,7 @@ wss.on("connection", (ws, req) => {
     const room = findPlayerRoom(playerId);
     if (!room) return;
 
-    const player = room.players.find(p => p.id === playerId);
+    const player = room.players.find((p) => p.id === playerId);
     if (!player) return;
 
     if (msg.type === "ready") {
@@ -178,31 +278,7 @@ wss.on("connection", (ws, req) => {
       if (room.players.length < 2) return;
       if (room.status !== "waiting") return;
 
-      room.status = "countdown";
-      let sec = COUNTDOWN_SECONDS;
-
-      const tick = () => {
-        broadcast(room, { type: "countdown", seconds: sec });
-        if (sec === 0) {
-          room.seed = Math.floor(Math.random() * 0x7fffffff);
-          room.status = "playing";
-          for (const p of room.players) {
-            p.alive = true;
-            p.score = 0;
-            p.lines = 0;
-            p.combo = 0;
-            p.backToBack = false;
-            p.pendingGarbage = 0;
-          }
-          room.rematchVotes = [];
-          broadcast(room, { type: "game_start", seed: room.seed });
-          return;
-        }
-        sec--;
-        setTimeout(tick, 1000);
-      };
-
-      tick();
+      startCountdown(room);
       return;
     }
 
@@ -215,58 +291,65 @@ wss.on("connection", (ws, req) => {
       player.backToBack = !!msg.isB2B;
       player.board = msg.board || [];
 
-      if ((msg.attack || 0) > 0) {
-        const opponent = room.players.find(p => p.id !== playerId);
-        if (opponent) {
-          opponent.pendingGarbage += msg.attack;
-          send(opponent.ws, { type: "garbage_received", amount: msg.attack });
-        }
+      const opponent = room.players.find((p) => p.id !== playerId);
+
+      if ((msg.attack || 0) > 0 && opponent && opponent.ws?.readyState === 1) {
+        opponent.pendingGarbage += msg.attack;
+        send(opponent.ws, { type: "garbage_received", amount: msg.attack });
       }
 
-      const danger = Array.isArray(player.board)
-        ? player.board.slice(0, 4).some(row => row.some(c => c !== 0))
-        : false;
+      const danger = getDanger(player.board);
 
-      broadcast(room, {
-        type: "opponent_update",
-        board: player.board || [],
-        score: player.score,
-        combo: player.combo,
-        b2b: player.backToBack,
-        danger
-      }, playerId);
+      broadcast(
+        room,
+        {
+          type: "opponent_update",
+          board: player.board || [],
+          score: player.score,
+          combo: player.combo,
+          b2b: player.backToBack,
+          danger,
+        },
+        playerId
+      );
 
       return;
     }
 
     if (msg.type === "board_snapshot") {
+      if (room.status !== "playing") return;
+
       player.board = msg.board || [];
       player.score = msg.score || 0;
 
-      const danger = Array.isArray(player.board)
-        ? player.board.slice(0, 4).some(row => row.some(c => c !== 0))
-        : false;
+      const danger = getDanger(player.board);
 
-      broadcast(room, {
-        type: "opponent_update",
-        board: player.board || [],
-        score: player.score,
-        combo: player.combo,
-        b2b: player.backToBack,
-        danger
-      }, playerId);
+      broadcast(
+        room,
+        {
+          type: "opponent_update",
+          board: player.board || [],
+          score: player.score,
+          combo: player.combo,
+          b2b: player.backToBack,
+          danger,
+        },
+        playerId
+      );
 
       return;
     }
 
     if (msg.type === "game_over") {
       if (room.status !== "playing") return;
-      player.alive = false;
 
-      const alive = room.players.filter(p => p.alive);
+      player.alive = false;
+      const alive = room.players.filter((p) => p.alive);
+
       if (alive.length <= 1) {
         room.status = "finished";
         const [p1, p2] = room.players;
+
         if (p1 && p2) {
           if (p1.alive && !p2.alive) {
             send(p1.ws, { type: "match_result", result: "win" });
@@ -282,54 +365,34 @@ wss.on("connection", (ws, req) => {
       return;
     }
 
-if (msg.type === "rematch") {
-  if (!room.rematchVotes.includes(playerId)) {
-    room.rematchVotes.push(playerId);
-  }
+    if (msg.type === "rematch") {
+      if (room.players.length < 2) return;
 
-  if (room.rematchVotes.length >= 2) {
-    room.status = "countdown";
-    room.rematchVotes = [];
+      if (!room.rematchVotes.includes(playerId)) {
+        room.rematchVotes.push(playerId);
+      }
 
-    for (const p of room.players) {
-      p.ready = false;
-      p.alive = true;
-      p.score = 0;
-      p.lines = 0;
-      p.combo = 0;
-      p.backToBack = false;
-      p.pendingGarbage = 0;
-      p.board = [];
+      if (room.rematchVotes.length >= 2) {
+        for (const p of room.players) {
+          p.ready = false;
+          p.alive = true;
+          p.score = 0;
+          p.lines = 0;
+          p.combo = 0;
+          p.backToBack = false;
+          p.pendingGarbage = 0;
+          p.board = [];
+        }
+
+        room.rematchVotes = [];
+        startCountdown(room);
+      }
+
+      return;
     }
 
-    let sec = 3;
-    const tick = () => {
-      broadcast(room, { type: "countdown", seconds: sec });
-
-      if (sec === 0) {
-        room.seed = Math.floor(Math.random() * 0x7fffffff);
-        room.status = "playing";
-        broadcast(room, { type: "game_start", seed: room.seed });
-        return;
-      }
-
-      sec--;
-      setTimeout(tick, 1000);
-    };
-
-    tick();
-  }
-
-  return;
-}
-
     if (msg.type === "leave_room") {
-      room.players = room.players.filter(p => p.id !== playerId);
-      broadcast(room, { type: "player_left", playerId });
-
-      if (room.players.length === 0) {
-        rooms.delete(room.roomId);
-      }
+      removePlayerFromRoom(room, playerId, "leave_room");
       return;
     }
   });
@@ -337,13 +400,7 @@ if (msg.type === "rematch") {
   ws.on("close", () => {
     const room = findPlayerRoom(playerId);
     if (!room) return;
-
-    room.players = room.players.filter(p => p.id !== playerId);
-    broadcast(room, { type: "player_left", playerId });
-
-    if (room.players.length === 0) {
-      rooms.delete(room.roomId);
-    }
+    removePlayerFromRoom(room, playerId, "disconnect");
   });
 });
 

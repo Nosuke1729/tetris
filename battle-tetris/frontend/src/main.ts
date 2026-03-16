@@ -1,6 +1,6 @@
 // ============================================================
 // main.ts  –  アプリケーションエントリポイント
-// Practice UX 改善版
+// 対戦切断時に試合を止める安全版
 // ============================================================
 
 import { GameEngine, LockEventData } from "./game/gameState";
@@ -12,7 +12,6 @@ import { ServerMessage } from "../../shared/types";
 import { BOARD_WIDTH, VISIBLE_HEIGHT, SNAPSHOT_INTERVAL_MS } from "../../shared/constants";
 import { createEmptyBoard } from "./game/board";
 import { ClearResult } from "./game/scoring";
-import { getPracticePuzzle, clonePracticePuzzle, PracticePuzzle } from "./practice/catalog";
 
 const CELL_SIZE = 30;
 const MINI_CELL = 14;
@@ -34,7 +33,6 @@ let inputMgr: InputManager | null = null;
 let ws: WsClient | null = null;
 let rafId: number | null = null;
 let snapshotTimer: number | null = null;
-let practiceFinishTimer: number | null = null;
 
 let playerName = "Player";
 let roomId = "";
@@ -46,82 +44,34 @@ let opponentB2B = false;
 let opponentDanger = false;
 let clearLabel = "";
 let clearLabelTimer: number | null = null;
-let gameMode: "single" | "battle" | "practice" = "single";
+let countdownNum = 0;
+let gameMode: "single" | "battle" = "single";
 let roomJoined = false;
-let currentPracticeId: string | null = null;
-let currentPractice: PracticePuzzle | null = null;
+let battleConnectionLost = false;
 
 window.addEventListener("DOMContentLoaded", () => {
   setupScreens();
   setupTitleScreen();
-  setupModeButtons();
-  setupPracticeButtons();
   setupRoomButtons();
   screenMgr.show("title");
 });
 
 function setupScreens() {
   screenMgr.register("title", el("screen-title"));
-  screenMgr.register("mode", el("screen-mode"));
-  screenMgr.register("practice", el("screen-practice"));
   screenMgr.register("room", el("screen-room"));
   screenMgr.register("game", el("screen-game"));
   screenMgr.register("result", el("screen-result"));
 }
 
 function setupTitleScreen() {
-  el("btn-single").onclick = () => {
-    playerName = inp("input-name").value.trim() || "Player";
-    screenMgr.show("mode");
-  };
-
+  el("btn-single").onclick = () => startSingle();
   el("btn-battle").onclick = () => showRoomSetup();
-}
-
-function setupModeButtons() {
-  el("btn-normal").onclick = () => startSingle();
-  el("btn-practice").onclick = () => {
-    screenMgr.show("practice");
-  };
-  el("btn-back-title-mode").onclick = () => {
-    screenMgr.show("title");
-  };
-  el("btn-back-mode").onclick = () => {
-    screenMgr.show("mode");
-  };
-}
-
-function setupPracticeButtons() {
-  document.querySelectorAll(".practice-item").forEach((node) => {
-    node.addEventListener("click", () => {
-      const btn = node as HTMLElement;
-      const practiceId = btn.dataset.practice;
-      if (!practiceId) return;
-      startPractice(practiceId);
-    });
-  });
 }
 
 function startSingle() {
   playerName = inp("input-name").value.trim() || "Player";
   gameMode = "single";
-  currentPracticeId = null;
-  currentPractice = null;
-  const seed = Math.floor(Math.random() * 0x7fffffff);
-  startGame(seed);
-}
-
-function startPractice(practiceId: string) {
-  const puzzleBase = getPracticePuzzle(practiceId);
-  if (!puzzleBase) {
-    alert(`Practice puzzle not found: ${practiceId}`);
-    return;
-  }
-
-  playerName = inp("input-name").value.trim() || "Player";
-  gameMode = "practice";
-  currentPracticeId = practiceId;
-  currentPractice = clonePracticePuzzle(puzzleBase);
+  battleConnectionLost = false;
 
   const seed = Math.floor(Math.random() * 0x7fffffff);
   startGame(seed);
@@ -130,8 +80,7 @@ function startPractice(practiceId: string) {
 function showRoomSetup() {
   playerName = inp("input-name").value.trim() || "Player";
   gameMode = "battle";
-  currentPracticeId = null;
-  currentPractice = null;
+  battleConnectionLost = false;
   roomId = "";
   roomJoined = false;
 
@@ -155,10 +104,8 @@ function showRoomSetup() {
 }
 
 function setRoomStatus(text: string) {
-  const main = document.getElementById("room-status");
-  const fallback = document.getElementById("room-status-fallback");
-  if (main) main.textContent = text;
-  if (fallback) fallback.textContent = text;
+  const status = document.getElementById("room-status");
+  if (status) status.textContent = text;
 }
 
 function getWsUrl(targetRoomId?: string): string {
@@ -168,6 +115,28 @@ function getWsUrl(targetRoomId?: string): string {
   return `${base}${sep}roomId=${encodeURIComponent(targetRoomId)}`;
 }
 
+function handleWsUnexpectedClose() {
+  el("ws-status").textContent = "● 切断";
+  el("ws-status").style.color = "#f44";
+
+  if (gameMode !== "battle") return;
+
+  battleConnectionLost = true;
+
+  if (screenMgr.getCurrent() === "game") {
+    stopGame();
+    endGame("disconnect");
+    return;
+  }
+
+  if (screenMgr.getCurrent() === "room") {
+    setRoomStatus("接続が切れました。タイトルへ戻って再接続してください。");
+    roomJoined = false;
+    roomId = "";
+    enableRoomButtons();
+  }
+}
+
 function setupWs(targetRoomId?: string, onOpen?: () => void) {
   if (ws) {
     ws.disconnect();
@@ -175,12 +144,26 @@ function setupWs(targetRoomId?: string, onOpen?: () => void) {
   }
 
   ws = new WsClient(getWsUrl(targetRoomId));
-  ws.connect(() => {
+
+  ws.onOpen(() => {
     el("ws-status").textContent = "● 接続中";
     el("ws-status").style.color = "#4f4";
+  });
+
+  ws.onClose(() => {
+    handleWsUnexpectedClose();
+  });
+
+  ws.onError(() => {
+    el("ws-status").textContent = "● エラー";
+    el("ws-status").style.color = "#f44";
+  });
+
+  ws.onMessage(handleServerMsg);
+
+  ws.connect(() => {
     if (onOpen) onOpen();
   });
-  ws.onMessage(handleServerMsg);
 }
 
 function handleServerMsg(msg: ServerMessage) {
@@ -208,21 +191,31 @@ function handleServerMsg(msg: ServerMessage) {
       setRoomStatus(`参加しました (${msg.players.length}/2)`);
       el("player-list").innerHTML = msg.players.map((p) => `<div>${p.name}</div>`).join("");
       el("btn-ready").style.display = "";
-      if (isHost && msg.players.length === 2) el("btn-start").style.display = "";
+      if (isHost && msg.players.length === 2) {
+        el("btn-start").style.display = "";
+      }
       break;
 
     case "player_joined":
       setRoomStatus("対戦相手が参加しました！");
       el("player-list").innerHTML += `<div>${msg.player.name}</div>`;
-      if (isHost) el("btn-start").style.display = "";
+      if (isHost) {
+        el("btn-start").style.display = "";
+      }
       break;
 
     case "player_left":
+      if (screenMgr.getCurrent() === "game" && gameMode === "battle") {
+        endGame("opponent_left");
+        return;
+      }
+
       setRoomStatus("対戦相手が退出しました。");
       el("btn-start").style.display = "none";
       break;
 
     case "countdown":
+      countdownNum = msg.seconds;
       el("countdown-overlay").textContent = msg.seconds > 0 ? `${msg.seconds}` : "GO!";
       el("countdown-overlay").style.display = "";
       if (msg.seconds === 0) {
@@ -233,6 +226,7 @@ function handleServerMsg(msg: ServerMessage) {
       break;
 
     case "game_start":
+      battleConnectionLost = false;
       startGame(msg.seed);
       break;
 
@@ -338,6 +332,7 @@ function setupRoomButtons() {
       ws.disconnect();
       ws = null;
     }
+
     roomJoined = false;
     roomId = "";
     enableRoomButtons();
@@ -345,36 +340,12 @@ function setupRoomButtons() {
   };
 }
 
-function applyPracticeSession(): boolean {
-  if (!engine || !renderer || !currentPractice) return false;
-
-  engine.loadPracticeState({
-    board: currentPractice.board,
-    activePiece: currentPractice.activePiece,
-    holdPiece: currentPractice.holdPiece,
-    nextQueue: currentPractice.nextQueue,
-    targetMask: currentPractice.targetMask,
-    objective: currentPractice.objective,
-    practiceName: currentPractice.name,
-  });
-
-  renderer.setPracticeOverlay({
-    overlayBoard: currentPractice.overlayBoard,
-    highlightPieceType: engine.state.activePiece?.type ?? null,
-    showMatchedOutline: true,
-  });
-
-  return true;
-}
-
 function startGame(seed: number) {
+  screenMgr.show("game");
   opponentBoard = createEmptyBoard();
   clearLabel = "";
-
-  if (practiceFinishTimer) {
-    clearTimeout(practiceFinishTimer);
-    practiceFinishTimer = null;
-  }
+  countdownNum = 0;
+  battleConnectionLost = false;
 
   const rematchBtn = el("btn-rematch") as HTMLButtonElement;
   rematchBtn.textContent = "再戦";
@@ -397,28 +368,12 @@ function startGame(seed: number) {
   canvas.width = canvasW;
   canvas.height = canvasH;
   renderer = new Renderer(canvas, CELL_SIZE);
-  renderer.clearPracticeOverlay();
 
   engine = new GameEngine(seed, {
     onLock: handleLock,
     onGameOver: handleGameOver,
     onClear: handleClear,
-    onPracticeSuccess: (info) => {
-      showClearLabel(`${info.practiceName ?? "PRACTICE"} CLEAR!`);
-      if (practiceFinishTimer) clearTimeout(practiceFinishTimer);
-      practiceFinishTimer = window.setTimeout(() => {
-        endGame("practice_clear");
-      }, 900);
-    },
   });
-
-  if (gameMode === "practice") {
-    if (!applyPracticeSession()) {
-      alert("Practice の読み込みに失敗しました。");
-      screenMgr.show("practice");
-      return;
-    }
-  }
 
   if (inputMgr) inputMgr.destroy();
   inputMgr = new InputManager(handleInput);
@@ -427,16 +382,7 @@ function startGame(seed: number) {
 
   if (rafId) cancelAnimationFrame(rafId);
   const loop = (now: number) => {
-    if (!engine || !renderer) return;
-
-    if (gameMode === "practice" && currentPractice) {
-      renderer.setPracticeOverlay({
-        overlayBoard: currentPractice.overlayBoard,
-        highlightPieceType: engine.state.activePiece?.type ?? null,
-        showMatchedOutline: true,
-      });
-    }
-
+    if (!engine) return;
     engine.tick(now);
     renderFrame();
     rafId = requestAnimationFrame(loop);
@@ -451,14 +397,11 @@ function startGame(seed: number) {
   if (gameMode === "battle") {
     snapshotTimer = window.setInterval(sendSnapshot, SNAPSHOT_INTERVAL_MS);
   }
-
-  screenMgr.show("game");
 }
 
 function setupGameUI() {
   el("btn-pause").onclick = togglePause;
   el("btn-exit-game").onclick = exitGame;
-  el("btn-pause").textContent = "一時停止";
   el("countdown-overlay").style.display = "none";
   el("opponent-area").style.display = gameMode === "battle" ? "" : "none";
 }
@@ -501,7 +444,7 @@ function handleInput(action: InputAction) {
 }
 
 function handleLock(data: LockEventData) {
-  if (gameMode === "battle" && ws) {
+  if (gameMode === "battle" && ws && ws.connected) {
     ws.send({
       type: "piece_lock",
       board: data.board,
@@ -526,16 +469,17 @@ function handleGameOver() {
     return;
   }
 
-  if (gameMode === "practice") {
-    endGame("practice");
+  if (gameMode === "battle") {
+    if (!battleConnectionLost) {
+      ws?.send({ type: "game_over" });
+    }
     return;
   }
-
-  ws?.send({ type: "game_over" });
 }
 
 function sendSnapshot() {
-  if (!engine || !ws) return;
+  if (!engine || !ws || !ws.connected) return;
+
   const s = engine.state;
   const p = s.activePiece;
   ws.send({
@@ -560,8 +504,8 @@ function renderFrame() {
 
   drawLeftPanel(ctx, s, PANEL_W);
 
-  (renderer as unknown as { offsetX: number; offsetY: number }).offsetX = PANEL_W;
-  (renderer as unknown as { offsetX: number; offsetY: number }).offsetY = 0;
+  (renderer as any).offsetX = PANEL_W;
+  (renderer as any).offsetY = 0;
   renderer.drawBoard(s.board, s.activePiece, engine.getGhostY(), s.pendingGarbage);
 
   drawRightPanel(ctx, s, PANEL_W + BOARD_PX);
@@ -604,7 +548,6 @@ function renderFrame() {
 function drawLeftPanel(ctx: CanvasRenderingContext2D, s: any, panelW: number) {
   ctx.fillStyle = "#0d0d0d";
   ctx.fillRect(0, 0, panelW, CELL_SIZE * VISIBLE_HEIGHT);
-
   ctx.fillStyle = "#555";
   ctx.font = "12px monospace";
   ctx.textAlign = "left";
@@ -621,7 +564,6 @@ function drawLeftPanel(ctx: CanvasRenderingContext2D, s: any, panelW: number) {
   ctx.fillStyle = "#555";
   ctx.font = "12px monospace";
   ctx.fillText("LEVEL", 10, 110);
-
   ctx.fillStyle = "#fff";
   ctx.font = "bold 28px monospace";
   ctx.fillText(String(s.level), 10, 140);
@@ -643,74 +585,11 @@ function drawLeftPanel(ctx: CanvasRenderingContext2D, s: any, panelW: number) {
     ctx.font = "bold 12px monospace";
     ctx.fillText(`GARBAGE: ${s.pendingGarbage}`, 6, 220);
   }
-
-  if (gameMode === "practice" && currentPractice) {
-    ctx.fillStyle = "#777";
-    ctx.font = "12px monospace";
-    ctx.fillText("MODE", 10, 255);
-
-    ctx.fillStyle = "#ffd700";
-    ctx.font = "bold 14px monospace";
-    ctx.fillText("PRACTICE", 10, 275);
-  }
 }
 
 function drawRightPanel(ctx: CanvasRenderingContext2D, s: any, startX: number) {
   ctx.fillStyle = "#0d0d0d";
   ctx.fillRect(startX, 0, 150, CELL_SIZE * VISIBLE_HEIGHT);
-
-  if (gameMode === "practice" && currentPractice) {
-    const currentType = s.activePiece?.type ?? "-";
-
-    ctx.fillStyle = "#777";
-    ctx.font = "12px monospace";
-    ctx.textAlign = "left";
-    ctx.fillText("PRACTICE", startX + 8, 20);
-
-    ctx.fillStyle = "#ffd700";
-    ctx.font = "bold 12px monospace";
-    wrapText(ctx, currentPractice.name, startX + 8, 40, 132, 16);
-
-    ctx.fillStyle = "#00cfff";
-    ctx.font = "11px monospace";
-    wrapText(ctx, `[${currentPractice.category}]`, startX + 8, 74, 132, 14);
-
-    ctx.fillStyle = "#888";
-    ctx.font = "10px monospace";
-    ctx.fillText("NOW", startX + 8, 102);
-
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 12px monospace";
-    wrapText(ctx, `${currentType} ミノを同じ色の影へ`, startX + 8, 118, 132, 14);
-
-    ctx.fillStyle = "#aaa";
-    ctx.font = "10px monospace";
-    wrapText(ctx, currentPractice.hint, startX + 8, 154, 132, 14);
-
-    ctx.fillStyle = "#555";
-    ctx.font = "12px monospace";
-    ctx.fillText("NEXT", startX + 8, 220);
-
-    for (let i = 0; i < Math.min(3, s.nextQueue.length); i++) {
-      renderer!.drawPiecePreview(s.nextQueue[i], startX + 8, 228 + i * 52, NEXT_CELL);
-    }
-
-    ctx.fillStyle = "#555";
-    ctx.font = "12px monospace";
-    ctx.fillText("SCORE", startX + 8, CELL_SIZE * VISIBLE_HEIGHT - 100);
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 18px monospace";
-    ctx.fillText(String(s.score), startX + 8, CELL_SIZE * VISIBLE_HEIGHT - 78);
-
-    ctx.fillStyle = "#555";
-    ctx.font = "12px monospace";
-    ctx.fillText("LINES", startX + 8, CELL_SIZE * VISIBLE_HEIGHT - 55);
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 18px monospace";
-    ctx.fillText(String(s.lines), startX + 8, CELL_SIZE * VISIBLE_HEIGHT - 33);
-    return;
-  }
-
   ctx.fillStyle = "#555";
   ctx.font = "12px monospace";
   ctx.textAlign = "left";
@@ -758,34 +637,6 @@ function drawOpponentPanel(ctx: CanvasRenderingContext2D, startX: number) {
   }
 }
 
-function wrapText(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  x: number,
-  y: number,
-  maxWidth: number,
-  lineHeight: number
-) {
-  const chars = text.split("");
-  let line = "";
-  let cy = y;
-
-  for (const ch of chars) {
-    const test = line + ch;
-    if (ctx.measureText(test).width > maxWidth && line.length > 0) {
-      ctx.fillText(line, x, cy);
-      line = ch;
-      cy += lineHeight;
-    } else {
-      line = test;
-    }
-  }
-
-  if (line) {
-    ctx.fillText(line, x, cy);
-  }
-}
-
 function showClearLabel(label: string) {
   clearLabel = label;
   if (clearLabelTimer) clearTimeout(clearLabelTimer);
@@ -810,16 +661,9 @@ function exitGame() {
 
   if (gameMode === "battle") {
     ws?.send({ type: "leave_room" });
-    screenMgr.show("title");
-    return;
   }
 
-  if (gameMode === "practice") {
-    screenMgr.show("practice");
-    return;
-  }
-
-  screenMgr.show("mode");
+  screenMgr.show("title");
 }
 
 function stopGame() {
@@ -830,10 +674,6 @@ function stopGame() {
   if (snapshotTimer) {
     clearInterval(snapshotTimer);
     snapshotTimer = null;
-  }
-  if (practiceFinishTimer) {
-    clearTimeout(practiceFinishTimer);
-    practiceFinishTimer = null;
   }
   inputMgr?.destroy();
   inputMgr = null;
@@ -857,12 +697,12 @@ function endGame(result: string) {
   } else if (result === "draw") {
     label = "🤝 DRAW";
     color = "#aaa";
-  } else if (result === "practice_clear") {
-    label = "PRACTICE CLEAR!";
+  } else if (result === "disconnect") {
+    label = "⚠ CONNECTION LOST";
+    color = "#ff8800";
+  } else if (result === "opponent_left") {
+    label = "🏆 OPPONENT LEFT";
     color = "#ffd700";
-  } else if (result === "practice") {
-    label = "PRACTICE END";
-    color = "#ffcc66";
   }
 
   el("result-label").textContent = label;
@@ -873,7 +713,7 @@ function endGame(result: string) {
   el("result-level").textContent = `Level: ${s?.level ?? 1}`;
 
   const rematchBtn = el("btn-rematch") as HTMLButtonElement;
-  rematchBtn.style.display = gameMode === "battle" ? "" : "none";
+  rematchBtn.style.display = gameMode === "battle" && result !== "disconnect" && result !== "opponent_left" ? "" : "none";
   rematchBtn.textContent = "再戦";
   rematchBtn.disabled = false;
 
@@ -885,18 +725,17 @@ function endGame(result: string) {
 
   el("btn-back-title2").onclick = () => {
     ws?.send({ type: "leave_room" });
+    if (ws) {
+      ws.disconnect();
+      ws = null;
+    }
+    roomJoined = false;
+    roomId = "";
     screenMgr.show("title");
   };
 
-  el("btn-play-again").onclick = () => {
-    if (gameMode === "practice" && currentPracticeId) {
-      startPractice(currentPracticeId);
-      return;
-    }
-    startSingle();
-  };
-
-  el("btn-play-again").style.display = gameMode === "battle" ? "none" : "";
+  el("btn-play-again").onclick = () => startSingle();
+  el("btn-play-again").style.display = gameMode === "single" ? "" : "none";
 }
 
 declare const __WS_URL__: string | undefined;
